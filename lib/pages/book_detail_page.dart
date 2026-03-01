@@ -1,253 +1,281 @@
 import 'package:flutter/material.dart';
+import 'cart.dart';
 
-class BookDetailPage extends StatelessWidget {
+class BookDetailPage extends StatefulWidget {
   const BookDetailPage({super.key});
 
   @override
+  State<BookDetailPage> createState() => _BookDetailPageState();
+}
+
+class _BookDetailPageState extends State<BookDetailPage> {
+  int quantity = 1;
+
+  void _addToCart() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Item added to cart"),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    // final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF9F5EF),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Top bar
-              Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  const Spacer(),
-                  const Text(
-                    "Book Detail",
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const Spacer(flex: 8),
-                ],
+      body: CustomScrollView(
+        slivers: [
+          /// 🔝 TOP APP BAR (appears on scroll)
+          SliverAppBar(
+            pinned: true,
+            backgroundColor: const Color(0xFFF9F5EF),
+            elevation: 0,
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back, color: Colors.black),
+              onPressed: () => Navigator.pop(context),
+            ),
+            title: const Image(
+              image: AssetImage("lib/assets/intercenlogo.png"),
+              height: 40,
+            ),
+            centerTitle: true,
+            
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.shopping_cart_outlined,
+                    color: Colors.black),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => CartPage()),
+                    );
+                  },
               ),
-
-              const SizedBox(height: 20),
-
-              // Book Header
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Book cover
-                  Container(
-                    height: 170,
-                    width: 120,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.08),
-                          blurRadius: 10,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
-                    child: Image.asset(
-                      "lib/assets/image.png",
-                      fit: BoxFit.cover,
-                    ),
-                  ),
-
-                  const SizedBox(width: 16),
-
-                  // Info
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          "Dear Daughters and Other Stories",
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          "KSH 1200",
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          "Barak Wandera",
-                          style: TextStyle(fontSize: 14),
-                        ),
-
-                        const SizedBox(height: 10),
-
-                        Row(
-                          children: const [
-                            Icon(Icons.star, color: Colors.amber, size: 18),
-                            SizedBox(width: 4),
-                            Text("4.5"),
-                          ],
-                        ),
-
-                        const SizedBox(height: 10),
-
-                        Wrap(
-                          spacing: 8,
-                          children: const [
-                            _TagChip(label: "Fantasy"),
-                            _TagChip(label: "Fiction"),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 28),
-
-              // Meta Info
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: const [
-                  _MetaItem(label: "Language", value: "ENG"),
-                  _MetaItem(label: "Published", value: "2022"),
-                  _MetaItem(label: "Pages", value: "312"),
-                ],
-              ),
-
-              const SizedBox(height: 28),
-
-              // Synopsis
-              const Text(
-                "Synopsis",
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-
-              const SizedBox(height: 10),
-
-              const Text(
-                "Four people who have been friends since high school work in the same company despite different fates. At the age of 31, they are hunting for a dream house that is at least across Jakarta. Kaluna, an employee of the General Affairs Division, whose salary never hits double digits. This girl has a side job as a lip model, dreaming of buying a house to get out of the situation of three families piled under one roof. In the midst of her struggle to save money, Kaluna is bullied by her lover for a lavish wedding party...",
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.6,
-                ),
-              ),
-
-              const SizedBox(height: 28),
-
-              // Buttons
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        side: BorderSide(color: cs.primary),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      onPressed: () {},
-                      child: Text(
-                        "Add to Cart",
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: cs.primary,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: cs.primary,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      onPressed: () {},
-                      child: const Text(
-                        "Buy Now",
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 20),
             ],
           ),
-        ),
+
+          /// 📘 BOOK IMAGE (half screen, zoomed out)
+          SliverToBoxAdapter(
+            child: Container(
+              height: MediaQuery.of(context).size.height * 0.5,
+              color: Colors.white,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Image.asset(
+                  "lib/assets/image.png",
+                  fit: BoxFit.contain, // 👈 zoomed out
+                ),
+              ),
+            ),
+          ),
+
+          /// 📄 CONTENT
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Academic & Education",
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+
+                  const Text(
+                    "Tell It to the Birds",
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+
+                  const Text(
+                    "by Barasa Waswa",
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontSize: 16,
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  const Text(
+                    "KSH 500.00",
+                    style: TextStyle(
+                      color: Color(0xFFB11226),
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  /// ➖➕ QUANTITY
+                  Container(
+                    height: 50,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.remove),
+                          onPressed: () {
+                            if (quantity > 1) {
+                              setState(() => quantity--);
+                            }
+                          },
+                        ),
+                        Expanded(
+                          child: Center(
+                            child: Text(
+                              quantity.toString(),
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.add),
+                          onPressed: () {
+                            setState(() => quantity++);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  /// 🛒 ADD TO CART BUTTON
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.shopping_cart_outlined),
+                      label: const Text(
+                        "Add to Cart",
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Color(0xFFB11226),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                      ),
+                      onPressed: _addToCart,
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  /// ❤️ SHARE BUTTONS
+                  Row(
+                    children: [
+                      _ActionIcon(icon: Icons.favorite_border),
+                      const SizedBox(width: 14),
+                      _ActionIcon(icon: Icons.share),
+                    ],
+                  ),
+
+                  const SizedBox(height: 30),
+
+                  /// 📑 TABS
+                  Row(
+                    children: const [
+                      _TabItem(title: "Description", selected: true),
+                      _TabItem(title: "Details"),
+                      _TabItem(title: "Reviews (0)"),
+                    ],
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  /// 📝 DESCRIPTION
+                  const Text(
+                    "A poetic and reflective literary work that captures human emotions, personal struggles, and silent hopes through symbolic storytelling. With lyrical depth and emotional resonance, the book explores themes of longing, healing, and inner reflection.",
+                    style: TextStyle(
+                      fontSize: 16,
+                      height: 1.6,
+                      color: Colors.grey,
+                    ),
+                  ),
+
+                  const SizedBox(height: 40),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _MetaItem extends StatelessWidget {
-  final String label;
-  final String value;
+/// ❤️ ICON BUTTON
+class _ActionIcon extends StatelessWidget {
+  final IconData icon;
 
-  const _MetaItem({
-    required this.label,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12),
-        ),
-      ],
-    );
-  }
-}
-
-class _TagChip extends StatelessWidget {
-  final String label;
-
-  const _TagChip({required this.label});
+  const _ActionIcon({required this.icon});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      height: 56,
+      width: 56,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Color(0xFFB11226)),
       ),
-      child: Text(
-        label,
-        style: const TextStyle(fontSize: 12),
+      child: Icon(icon, color: Color(0xFFB11226)),
+    );
+  }
+}
+
+/// 📑 TAB ITEM
+class _TabItem extends StatelessWidget {
+  final String title;
+  final bool selected;
+
+  const _TabItem({
+    required this.title,
+    this.selected = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Column(
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              color: selected ? Colors.black : Colors.grey,
+            ),
+          ),
+          const SizedBox(height: 6),
+          if (selected)
+            Container(
+              height: 2,
+              width: 40,
+              color: Color(0xFFB11226),
+            ),
+        ],
       ),
     );
   }
