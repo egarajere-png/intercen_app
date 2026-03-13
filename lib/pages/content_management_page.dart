@@ -15,7 +15,7 @@ import '../theme/app_colors.dart';
 // full CRUD (view, edit, unpublish/publish, delete).
 //
 // Security model:
-//   • All queries are filtered by `uploader_id = auth.uid()` both here AND
+//   • All queries are filtered by `uploaded_by = auth.uid()` both here AND
 //     enforced at the DB level via RLS — so even a spoofed route param can
 //     never surface another user's content.
 //   • Session is re-validated on initState; stale / missing sessions redirect
@@ -109,7 +109,7 @@ class _ContentManagementPageState extends State<ContentManagementPage>
             total_reviews, created_at, updated_at, description,
             is_for_sale, stock_quantity
           ''')
-          .eq('uploader_id', uid)
+          .eq('uploaded_by', uid)          // ✅ FIXED: was 'uploader_id'
           .order('created_at', ascending: false);
 
       setState(() {
@@ -186,7 +186,9 @@ class _ContentManagementPageState extends State<ContentManagementPage>
       await _sb.from('content').update({
         'status':     newStatus,
         'updated_at': DateTime.now().toIso8601String(),
-      }).eq('id', id).eq('uploader_id', _sb.auth.currentUser!.id);
+      })
+          .eq('id', id)
+          .eq('uploaded_by', _sb.auth.currentUser!.id); // ✅ FIXED: was 'uploader_id'
 
       _showSnack(
         '"${item['title']}" ${newStatus == 'published' ? 'published ✓' : 'unpublished'}',
@@ -291,7 +293,7 @@ class _ContentManagementPageState extends State<ContentManagementPage>
       await _sb.from('content')
           .delete()
           .eq('id', id)
-          .eq('uploader_id', _sb.auth.currentUser!.id);
+          .eq('uploaded_by', _sb.auth.currentUser!.id); // ✅ FIXED: was 'uploader_id'
       _showSnack('"$title" deleted permanently');
       _fetchContent();
     } catch (e) {
