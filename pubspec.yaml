@@ -50,7 +50,11 @@ flutter:
     - lib/assets/pandemic.png
     - lib/assets/maangavu.png
     - lib/assets/egara.jpeg
-
+    # Team images
+    - lib/assets/team/barak.jpeg
+    - lib/assets/team/chelangatnaomi.jpeg
+    - lib/assets/team/bettyatiemo.jpeg
+    - lib/assets/team/bahati.jpeg
 
   fonts:
     - family: PlayfairDisplay

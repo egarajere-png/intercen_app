@@ -31,6 +31,7 @@ import 'pages/content_reader_page.dart';
 import 'pages/publish_with_us_page.dart';
 
 import 'theme/app_colors.dart';
+import 'pages/about_page.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NAVIGATOR KEY  – shared across the whole app
@@ -211,6 +212,9 @@ class _IntercenAppState extends State<IntercenApp> {
         '/book-detail': (_) => const AuthGuard(child: BookDetailPage()),
         '/cart':        (_) => const AuthGuard(child: CartPage()),
         '/checkout':    (_) => AuthGuard(child: CheckoutFlowPage()),
+
+        // ── About Intercen ───────────────────────────────────────────────────
+        '/about':       (_) => AboutPage(),
 
         // ── Checkout / payment ────────────────────────────────────────────────
         '/checkout/payment': (ctx) {

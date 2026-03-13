@@ -3,6 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import '../theme/app_colors.dart';
+import 'about_page.dart';
+import 'publish_with_us.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SETTINGS PAGE
@@ -210,12 +212,16 @@ class _SettingsPageState extends State<SettingsPage> {
               _SectionLabel('Publishing'),
               _SettingsGroup(children: [
                 _SettingsTile(
-                  icon: Icons.drive_file_rename_outline_rounded,
-                  iconColor: const Color(0xFF0891B2),
-                  iconBg: const Color(0xFFECFEFF),
-                  title: 'Publish With Us',
-                  subtitle: 'Submit your manuscript or book',
-                  onTap: () => Navigator.pushNamed(context, '/publish'),
+                      icon: Icons.drive_file_rename_outline_rounded,
+                      iconColor: const Color(0xFF0891B2),
+                      iconBg: const Color(0xFFECFEFF),
+                      title: 'Publish With Us',
+                      subtitle: 'Submit your manuscript or book',
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => PublishWithUsPage(),
+                        ),
+                      ),
                 ),
                 _Divider(),
                 _SettingsTile(
@@ -240,7 +246,11 @@ class _SettingsPageState extends State<SettingsPage> {
                   iconBg: const Color(0xFFF3F4F6),
                   title: 'About Intercen',
                   subtitle: 'Version, licenses and legal',
-                  onTap: () => _showAboutSheet(),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AboutPage(),
+                    ),
+                  ),
                 ),
                 _Divider(),
                 _SettingsTile(

@@ -4,9 +4,11 @@ import 'dart:html' as html;
 import 'dart:ui_web' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../theme/app_colors.dart';
 
@@ -15,13 +17,36 @@ import '../theme/app_colors.dart';
 //
 // Route  : /content/:contentId
 //
-// VIEWER ROUTING (auto-detected from file_url extension):
-//   .pdf / .epub           → Browser iframe (HtmlElementView) — web-native, no plugin
+// FILE OPENING STRATEGY (revamped):
+//   Mobile (Android/iOS) → url_launcher opens file URL via OS intent/share sheet
+//                          → user picks WPS, Word, Adobe, etc. from installed apps
+//   Web                  → opens file URL in a new browser tab
+//
+// VIEWER ROUTING (fallback when no file, or for images):
 //   .jpg/.jpeg/.png/.webp  → _ImagePageViewer  (swipeable, pinch-to-zoom)
 //   no file / text only    → scrollable paragraph reader
 //
 // pubspec.yaml — dependencies required:
 //   cached_network_image: ^3.3.1
+//   url_launcher: ^6.2.5
+//
+// AndroidManifest.xml — add inside <queries>:
+//   <intent>
+//     <action android:name="android.intent.action.VIEW" />
+//     <data android:mimeType="application/pdf" />
+//   </intent>
+//   <intent>
+//     <action android:name="android.intent.action.VIEW" />
+//     <data android:mimeType="application/msword" />
+//   </intent>
+//   <intent>
+//     <action android:name="android.intent.action.VIEW" />
+//     <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+//   </intent>
+//   <intent>
+//     <action android:name="android.intent.action.VIEW" />
+//     <data android:mimeType="application/epub+zip" />
+//   </intent>
 //
 // ACCESS MODEL (tiered):
 //   Tier 0  public + free          → no login
@@ -32,7 +57,7 @@ import '../theme/app_colors.dart';
 
 // ── Viewer mode ───────────────────────────────────────────────────────────────
 
-enum _ViewerMode { pdf, image, text }
+enum _ViewerMode { externalFile, image, text }
 
 // ── Reader theme ──────────────────────────────────────────────────────────────
 
@@ -91,6 +116,78 @@ class _ReaderSettings {
   });
 }
 
+// ── File type info helper ─────────────────────────────────────────────────────
+
+class _FileTypeInfo {
+  final String label;
+  final String mimeType;
+  final IconData icon;
+  final Color color;
+  final List<String> suggestedApps;
+
+  const _FileTypeInfo({
+    required this.label,
+    required this.mimeType,
+    required this.icon,
+    required this.color,
+    required this.suggestedApps,
+  });
+
+  static _FileTypeInfo fromUrl(String? url) {
+    if (url == null) return _unknown;
+    final q = url.toLowerCase().split('?').first;
+    if (q.endsWith('.pdf'))  return _pdf;
+    if (q.endsWith('.epub')) return _epub;
+    if (q.endsWith('.doc'))  return _doc;
+    if (q.endsWith('.docx')) return _docx;
+    if (q.endsWith('.txt'))  return _txt;
+    return _unknown;
+  }
+
+  static const _pdf = _FileTypeInfo(
+    label: 'PDF Document',
+    mimeType: 'application/pdf',
+    icon: Icons.picture_as_pdf_rounded,
+    color: Color(0xFFEF4444),
+    suggestedApps: ['Adobe Acrobat', 'WPS Office', 'Google Drive', 'Files'],
+  );
+  static const _epub = _FileTypeInfo(
+    label: 'EPUB eBook',
+    mimeType: 'application/epub+zip',
+    icon: Icons.auto_stories_rounded,
+    color: Color(0xFF8B5CF6),
+    suggestedApps: ['Google Play Books', 'Moon+ Reader', 'ReadEra', 'Calibre'],
+  );
+  static const _doc = _FileTypeInfo(
+    label: 'Word Document',
+    mimeType: 'application/msword',
+    icon: Icons.description_rounded,
+    color: Color(0xFF2563EB),
+    suggestedApps: ['Microsoft Word', 'WPS Office', 'Google Docs'],
+  );
+  static const _docx = _FileTypeInfo(
+    label: 'Word Document',
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    icon: Icons.description_rounded,
+    color: Color(0xFF2563EB),
+    suggestedApps: ['Microsoft Word', 'WPS Office', 'Google Docs'],
+  );
+  static const _txt = _FileTypeInfo(
+    label: 'Text File',
+    mimeType: 'text/plain',
+    icon: Icons.text_snippet_rounded,
+    color: Color(0xFF6B7280),
+    suggestedApps: ['Notes', 'Google Docs', 'WPS Office'],
+  );
+  static const _unknown = _FileTypeInfo(
+    label: 'Document',
+    mimeType: 'application/octet-stream',
+    icon: Icons.insert_drive_file_rounded,
+    color: Color(0xFF6B7280),
+    suggestedApps: ['WPS Office', 'Microsoft Office', 'Google Drive'],
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PAGE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,8 +205,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
   final _sb = Supabase.instance.client;
   final _scrollCtrl = ScrollController();
   final _settings = _ReaderSettings();
-  // Web PDF viewer — unique view-type ID per page load
-  String? _pdfViewId;
 
   // ── State ────────────────────────────────────────────────────────────────
   Map<String, dynamic>? _content;
@@ -120,7 +215,7 @@ class _ContentReaderPageState extends State<ContentReaderPage>
   // Viewer
   _ViewerMode _viewerMode = _ViewerMode.text;
   String? _fileUrl;
-  bool _pdfLoaded = false;
+  bool _isLaunching = false;
 
   // Toolbar
   bool _toolbarVisible = true;
@@ -132,7 +227,7 @@ class _ContentReaderPageState extends State<ContentReaderPage>
   bool _showSettings = false;
   bool _bookmarked = false;
 
-  // Reading progress sync (debounced — saves to reading_progress table)
+  // Reading progress sync
   Timer? _progressSaveTimer;
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -143,38 +238,135 @@ class _ContentReaderPageState extends State<ContentReaderPage>
 
   double get _progress => _readProgress;
 
+  bool get _hasFile => _fileUrl != null && _fileUrl!.isNotEmpty;
+
   static _ViewerMode _detectMode(
     String? fileUrl,
     String? contentType,
     String? coverImageUrl,
   ) {
-    // ── File URL present — detect by extension then content_type ──────────
     if (fileUrl != null && fileUrl.isNotEmpty) {
-      final q = fileUrl.toLowerCase().split('?').first; // strip signed-URL params
-      if (q.endsWith('.pdf') || q.endsWith('.epub')) return _ViewerMode.pdf;
+      final q = fileUrl.toLowerCase().split('?').first;
+      // Images → in-app viewer
       if (q.endsWith('.jpg') || q.endsWith('.jpeg') ||
           q.endsWith('.png')  || q.endsWith('.webp')) {
         return _ViewerMode.image;
       }
       final ct = (contentType ?? '').toLowerCase();
       if (ct.contains('image')) return _ViewerMode.image;
-      if (ct.contains('pdf')  || ct.contains('epub') ||
-          ct.contains('doc')   || ct.contains('text')) {
-        return _ViewerMode.pdf;
-      }
-      // Has a file but unknown type — try PDF viewer
-      return _ViewerMode.pdf;
+      // Everything else (pdf, epub, doc, docx, txt, unknown) → external app
+      return _ViewerMode.externalFile;
     }
 
-    // ── No file_url (e.g. content-upload sets file_url: null) ─────────────
-    // If a cover image exists, show it as the visual content (image viewer).
-    // This handles ebook cards where the cover IS the content preview.
     if (coverImageUrl != null && coverImageUrl.isNotEmpty) {
       return _ViewerMode.image;
     }
 
-    // Nothing to show — fall back to description text
     return _ViewerMode.text;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // OPEN WITH EXTERNAL APP
+  // On mobile: fires the OS intent/share sheet → user picks WPS, Word, etc.
+  // On web: opens in a new browser tab.
+  // ─────────────────────────────────────────────────────────────────────────
+  Future<void> _openWithExternalApp() async {
+    if (!_hasFile) return;
+
+    final fileInfo = _FileTypeInfo.fromUrl(_fileUrl);
+
+    // On web, skip the sheet and just open directly
+    if (kIsWeb) {
+      await _launchFileUrl();
+      return;
+    }
+
+    // On mobile, show a confirmation bottom sheet first
+    if (!mounted) return;
+    final shouldOpen = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => _OpenWithSheet(
+        fileInfo: fileInfo,
+        fileName: _content?['title'] as String? ?? 'Document',
+        onOpen: () => Navigator.pop(context, true),
+        onCancel: () => Navigator.pop(context, false),
+      ),
+    );
+
+    if (shouldOpen == true) {
+      await _launchFileUrl();
+    }
+  }
+
+  Future<void> _launchFileUrl() async {
+    if (!_hasFile || _isLaunching) return;
+    setState(() => _isLaunching = true);
+
+    try {
+      final uri = Uri.parse(_fileUrl!);
+
+      if (kIsWeb) {
+        // Web: open in new tab
+        html.window.open(_fileUrl!, '_blank');
+        return;
+      }
+
+      // Mobile: try external app first, then universal link fallback
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+
+      if (!launched && mounted) {
+        // Fallback: try in-app browser
+        final fallback = await launchUrl(
+          uri,
+          mode: LaunchMode.inAppBrowserView,
+        );
+        if (!fallback && mounted) {
+          _showLaunchError();
+        }
+      }
+
+      // Record progress: mark as opened
+      _saveReadingProgress();
+
+    } catch (e) {
+      debugPrint('[Reader] Failed to open file: $e');
+      if (mounted) _showLaunchError();
+    } finally {
+      if (mounted) setState(() => _isLaunching = false);
+    }
+  }
+
+  void _showLaunchError() {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: const Text(
+        'Could not open file. No compatible app found.',
+        style: TextStyle(fontFamily: 'DM Sans', fontSize: 13),
+      ),
+      backgroundColor: const Color(0xFFEF4444),
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      margin: const EdgeInsets.all(12),
+      action: SnackBarAction(
+        label: 'Copy Link',
+        textColor: Colors.white,
+        onPressed: () {
+          Clipboard.setData(ClipboardData(text: _fileUrl ?? ''));
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: const Text('Link copied to clipboard',
+                style: TextStyle(fontFamily: 'DM Sans', fontSize: 13)),
+            backgroundColor: const Color(0xFF16A34A),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            margin: const EdgeInsets.all(12),
+          ));
+        },
+      ),
+    ));
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -192,7 +384,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
   void dispose() {
     _toolbarTimer?.cancel();
     _progressSaveTimer?.cancel();
-    // Save final progress synchronously before widget is removed
     _saveReadingProgress();
     _scrollCtrl
       ..removeListener(_onScroll)
@@ -223,15 +414,14 @@ class _ContentReaderPageState extends State<ContentReaderPage>
         return;
       }
 
-      final visibility = data['visibility'] as String? ?? 'private';
-      final isFree     = data['is_free']    as bool?   ?? false;
-      final price      = (data['price']     as num?)?.toDouble() ?? 0.0;
-      final isForSale  = data['is_for_sale'] as bool?  ?? false;
-      final orgId      = data['organization_id'] as String?;
+      final visibility  = data['visibility']   as String? ?? 'private';
+      final isFree      = data['is_free']       as bool?   ?? false;
+      final price       = (data['price']        as num?)?.toDouble() ?? 0.0;
+      final isForSale   = data['is_for_sale']   as bool?   ?? false;
+      final orgId       = data['organization_id'] as String?;
       final isPublicFree = visibility == 'public' && (isFree || price == 0.0) && !isForSale;
 
       if (!isPublicFree) {
-        // Auth required
         final session = _sb.auth.currentSession;
         if (session == null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -251,7 +441,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
 
         final uid = _sb.auth.currentUser!.id;
 
-        // Org gate
         if (visibility == 'private' && orgId != null) {
           final orgCheck = await _sb.from('organization_members')
               .select('role').eq('organization_id', orgId)
@@ -262,7 +451,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
           }
         }
 
-        // Purchase gate
         if (isForSale || price > 0.0) {
           final purchase = await _sb.from('order_items')
               .select('id, orders!inner(user_id, payment_status)')
@@ -282,23 +470,19 @@ class _ContentReaderPageState extends State<ContentReaderPage>
         }
       }
 
-      // Record view (best-effort)
       final downloads = (data['total_downloads'] as int?) ?? 0;
       _sb.from('content').update({'total_downloads': downloads + 1})
           .eq('id', widget.contentId).ignore();
 
-      final fileUrl     = data['file_url']     as String?;
-      final contentType = data['content_type'] as String?;
-      final description = data['description']  as String?;
+      final fileUrl     = data['file_url']        as String?;
+      final contentType = data['content_type']    as String?;
+      final description = data['description']     as String?;
       final coverUrl    = data['cover_image_url'] as String?;
-      final backpageUrl = data['backpage_image_url'] as String?;
       final mode = _detectMode(fileUrl, contentType, coverUrl);
 
-      // Debug: log what was detected so blank-screen issues are traceable
       debugPrint('[Reader] contentId=${widget.contentId}');
-      debugPrint('[Reader] file_url=$fileUrl  cover=$coverUrl  backpage=$backpageUrl');
+      debugPrint('[Reader] file_url=$fileUrl  cover=$coverUrl');
       debugPrint('[Reader] content_type=$contentType  mode=$mode');
-      debugPrint('[Reader] description length=${description?.length ?? 0}');
 
       if (mounted) {
         setState(() {
@@ -309,7 +493,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
           _loading    = false;
         });
       }
-      // Load ancillary data after content is visible
       _loadBookmarkState();
       _loadReadingProgress();
     } catch (e) {
@@ -318,24 +501,16 @@ class _ContentReaderPageState extends State<ContentReaderPage>
     }
   }
 
-  // ── Bookmark (table: bookmarks) ──────────────────────────────────────────
+  // ── Bookmark ──────────────────────────────────────────────────────────────
   Future<void> _loadBookmarkState() async {
     final user = _sb.auth.currentUser;
     if (user == null) return;
     try {
-      // bookmarks table has: id, user_id, content_id, page_number, note, created_at
-      // We query for any bookmark on this content — presence = bookmarked
-      final r = await _sb
-          .from('bookmarks')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('content_id', widget.contentId)
-          .limit(1)
-          .maybeSingle();
+      final r = await _sb.from('bookmarks').select('id')
+          .eq('user_id', user.id).eq('content_id', widget.contentId)
+          .limit(1).maybeSingle();
       if (mounted) setState(() => _bookmarked = r != null);
-    } catch (e) {
-      debugPrint('loadBookmarkState error: $e');
-    }
+    } catch (e) { debugPrint('loadBookmarkState error: $e'); }
   }
 
   Future<void> _toggleBookmark() async {
@@ -345,14 +520,9 @@ class _ContentReaderPageState extends State<ContentReaderPage>
     setState(() => _bookmarked = !_bookmarked);
     try {
       if (was) {
-        // Delete all bookmarks for this user+content
-        await _sb
-            .from('bookmarks')
-            .delete()
-            .eq('user_id', user.id)
-            .eq('content_id', widget.contentId);
+        await _sb.from('bookmarks').delete()
+            .eq('user_id', user.id).eq('content_id', widget.contentId);
       } else {
-        // Insert new bookmark (page_number and note are optional)
         await _sb.from('bookmarks').insert({
           'user_id': user.id,
           'content_id': widget.contentId,
@@ -365,30 +535,23 @@ class _ContentReaderPageState extends State<ContentReaderPage>
     }
   }
 
-  // ── Reading progress (table: reading_progress) ─────────────────────────────
-  // Loads saved progress on open; saves debounced on every scroll tick.
+  // ── Reading progress ───────────────────────────────────────────────────────
   Future<void> _loadReadingProgress() async {
     final user = _sb.auth.currentUser;
     if (user == null) return;
     try {
-      final r = await _sb
-          .from('reading_progress')
+      final r = await _sb.from('reading_progress')
           .select('percentage, current_page, total_pages')
-          .eq('user_id', user.id)
-          .eq('content_id', widget.contentId)
-          .maybeSingle();
+          .eq('user_id', user.id).eq('content_id', widget.contentId).maybeSingle();
       if (r != null && mounted) {
         final pct = (r['percentage'] as num?)?.toDouble() ?? 0;
         setState(() => _readProgress = (pct / 100).clamp(0.0, 1.0));
-        // Restore text scroll position
         if (_viewerMode == _ViewerMode.text && _scrollCtrl.hasClients) {
           final max = _scrollCtrl.position.maxScrollExtent;
           _scrollCtrl.jumpTo((_readProgress * max).clamp(0, max));
         }
       }
-    } catch (e) {
-      debugPrint('loadReadingProgress error: $e');
-    }
+    } catch (e) { debugPrint('loadReadingProgress error: $e'); }
   }
 
   void _scheduleProgressSave() {
@@ -408,19 +571,17 @@ class _ContentReaderPageState extends State<ContentReaderPage>
         'completed': _readProgress >= 0.98,
         'last_read_at': DateTime.now().toIso8601String(),
       }, onConflict: 'user_id,content_id');
-    } catch (e) {
-      debugPrint('saveReadingProgress error: $e');
-    }
+    } catch (e) { debugPrint('saveReadingProgress error: $e'); }
   }
 
-  // ── Scroll / progress (text mode) ─────────────────────────────────────────
+  // ── Scroll ────────────────────────────────────────────────────────────────
   void _onScroll() {
     final max = _scrollCtrl.position.maxScrollExtent;
     if (max <= 0) return;
     final p = (_scrollCtrl.offset / max).clamp(0.0, 1.0);
     if ((p - _readProgress).abs() > 0.005) {
       setState(() => _readProgress = p);
-      _scheduleProgressSave(); // debounced — saves after 3s of no scrolling
+      _scheduleProgressSave();
     }
     if (p >= 0.30 && !_reviewPrompted) {
       _reviewPrompted = true;
@@ -494,23 +655,16 @@ class _ContentReaderPageState extends State<ContentReaderPage>
   @override
   Widget build(BuildContext context) {
     if (_loading) return _loadingView();
-    if (_accessError != null) {
-      debugPrint('[Reader] Access error: $_accessError');
-      return _accessGateView();
-    }
-    // Guard: content not loaded yet (shouldn't happen, but prevents _content! crash)
-    if (_content == null) {
-      debugPrint('[Reader] Content is null');
-      return _loadingView();
-    }
+    if (_accessError != null) return _accessGateView();
+    if (_content == null) return _loadingView();
 
     final theme = _settings.theme;
 
-    // Fallback: If viewer mode is unknown, show detail page
     Widget mainViewer;
     switch (_viewerMode) {
-      case _ViewerMode.pdf:
-        mainViewer = _buildPdfViewer();
+      case _ViewerMode.externalFile:
+        // Show the rich detail/launch page for external file types
+        mainViewer = _buildExternalFileView(theme);
         break;
       case _ViewerMode.image:
         mainViewer = _buildImageViewer();
@@ -518,28 +672,19 @@ class _ContentReaderPageState extends State<ContentReaderPage>
       case _ViewerMode.text:
         mainViewer = _buildTextViewer(theme);
         break;
-      default:
-        debugPrint('[Reader] Unknown viewer mode, showing detail page');
-        mainViewer = _buildContentDetailPage(
-          _content?['cover_image_url'] as String?,
-          _content?['backpage_image_url'] as String?
-        );
     }
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: theme.isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
       child: Scaffold(
-        backgroundColor: _viewerMode == _ViewerMode.pdf
-            ? const Color(0xFF3A3A3A)
-            : (_viewerMode == _ViewerMode.image ? Colors.black : theme.bg),
+        backgroundColor: _viewerMode == _ViewerMode.image ? Colors.black : theme.bg,
         body: GestureDetector(
-          onTap: _toggleToolbar,
+          onTap: _viewerMode == _ViewerMode.image ? _toggleToolbar : null,
           behavior: HitTestBehavior.translucent,
           child: Stack(children: [
-            // ────── MAIN VIEWER ────────────────────────────────────────────
             Positioned.fill(child: mainViewer),
 
-            // ────── THIN PROGRESS LINE (top edge, always visible) ──────────
+            // Progress line
             Positioned(
               top: 0, left: 0, right: 0,
               child: LinearProgressIndicator(
@@ -550,7 +695,7 @@ class _ContentReaderPageState extends State<ContentReaderPage>
               ),
             ),
 
-            // ────── TOP TOOLBAR ────────────────────────────────────────────
+            // Top toolbar
             AnimatedPositioned(
               duration: const Duration(milliseconds: 260),
               curve: Curves.easeInOut,
@@ -559,7 +704,7 @@ class _ContentReaderPageState extends State<ContentReaderPage>
               child: _buildTopBar(theme),
             ),
 
-            // ────── BOTTOM BAR ─────────────────────────────────────────────
+            // Bottom bar
             AnimatedPositioned(
               duration: const Duration(milliseconds: 260),
               curve: Curves.easeInOut,
@@ -568,7 +713,7 @@ class _ContentReaderPageState extends State<ContentReaderPage>
               child: _buildBottomBar(theme),
             ),
 
-            // ────── SETTINGS PANEL ─────────────────────────────────────────
+            // Settings panel
             (_showSettings && _viewerMode == _ViewerMode.text)
                 ? _buildSettingsPanel(theme)
                 : const SizedBox.shrink(),
@@ -579,159 +724,315 @@ class _ContentReaderPageState extends State<ContentReaderPage>
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // PDF VIEWER — Web (iframe)
+  // EXTERNAL FILE VIEW
   //
-  // Flutter Web cannot use native plugins like Syncfusion. Instead we inject
-  // the browser's own built-in PDF renderer via an <iframe> using
-  // HtmlElementView + dart:ui_web's platformViewRegistry.
-  //
-  // • Chrome / Edge  → native PDF viewer with toolbar
-  // • Firefox        → native PDF viewer (pdf.js based)
-  // • Safari         → native PDF renderer
-  //
-  // The iframe URL is the raw Supabase file_url. Supabase storage sets
-  // Access-Control-Allow-Origin: * on public buckets so no CORS issues.
-  // Signed URLs also work because auth is embedded in the URL params.
+  // Shown for PDFs, EPUBs, DOC/DOCX, and other document types.
+  // Replaces the in-app PDF iframe with a clean landing page that
+  // hands off to the phone's native document apps (WPS, Word, etc.).
   // ═══════════════════════════════════════════════════════════════════════════
-  Timer? _pdfTimeoutTimer;
-  bool _pdfTimeout = false;
+  Widget _buildExternalFileView(_ReaderTheme theme) {
+    final c           = _content!;
+    final cover       = c['cover_image_url']    as String?;
+    final backpage    = c['backpage_image_url'] as String?;
+    final title       = c['title']              as String? ?? 'Untitled';
+    final subtitle    = c['subtitle']           as String?;
+    final author      = c['author']             as String?;
+    final publisher   = c['publisher']          as String?;
+    final description = c['description']        as String?;
+    final ct          = c['content_type']       as String? ?? '';
+    final language    = c['language']           as String? ?? 'en';
+    final pageCount   = c['page_count']         as int?;
+    final fileInfo    = _FileTypeInfo.fromUrl(_fileUrl);
 
-  Widget _buildPdfViewer() {
-    // Guard: null/empty fileUrl → fall back to text viewer
-    if (_fileUrl == null || _fileUrl!.isEmpty) {
-      return _buildTextViewer(_settings.theme);
-    }
-    final viewId = 'pdf-${_fileUrl!.hashCode}';
-    // Only register view factory once
-    if (_pdfViewId != viewId) {
-      _pdfViewId = viewId;
-      _pdfTimeout = false;
-      _pdfTimeoutTimer?.cancel();
-      _pdfTimeoutTimer = Timer(const Duration(seconds: 10), () {
-        if (mounted && !_pdfLoaded) {
-          setState(() => _pdfTimeout = true);
-        }
-      });
-      try {
-        ui.platformViewRegistry.registerViewFactory(viewId, (int id) {
-          final iframe = html.IFrameElement()
-            ..style.border = 'none'
-            ..style.width = '100%'
-            ..style.height = '100%'
-            ..style.backgroundColor = '#3a3a3a'
-            ..allowFullscreen = true
-            ..src = '$_fileUrl#toolbar=1&navpanes=0&scrollbar=1';
+    return CustomScrollView(
+      controller: _scrollCtrl,
+      physics: const BouncingScrollPhysics(),
+      slivers: [
 
-          iframe.onLoad.listen((_) {
-            if (mounted) {
-              _pdfTimeoutTimer?.cancel();
-              setState(() => _pdfLoaded = true);
-              Future.delayed(const Duration(seconds: 5), () {
-                if (mounted) setState(() => _toolbarVisible = false);
-              });
-            }
-          });
-          iframe.onError.listen((_) {
-            if (mounted) {
-              _pdfTimeoutTimer?.cancel();
-              setState(() {
-                _pdfLoaded = false;
-                _pdfTimeout = true;
-              });
-            }
-          });
-          return iframe;
-        });
-      } catch (_) {
-        // Already registered — safe to ignore
-      }
-    }
-
-    // Show loading indicator while PDF loads
-    return Stack(
-      children: [
-        HtmlElementView(viewType: viewId),
-        if (!_pdfLoaded && !_pdfTimeout)
-          Positioned.fill(
-            child: Container(
-              color: const Color(0xFF3A3A3A),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(color: AppColors.primary),
-                    const SizedBox(height: 18),
-                    const Text(
-                      'Opening your book...',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        fontFamily: 'DM Sans',
-                      ),
-                    ),
-                  ],
+        // ── Full-bleed cover hero ──────────────────────────────────────────
+        SliverToBoxAdapter(
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.55,
+            child: Stack(fit: StackFit.expand, children: [
+              if (cover != null && cover.isNotEmpty)
+                CachedNetworkImage(
+                  imageUrl: cover,
+                  fit: BoxFit.cover,
+                  errorWidget: (_, __, ___) => _coverFallback(fileInfo),
+                )
+              else
+                _coverFallback(fileInfo),
+              // Dark gradient overlay for readability
+              Positioned.fill(child: Container(
+                decoration: BoxDecoration(gradient: LinearGradient(
+                  begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                  colors: [Colors.black.withOpacity(0.15), theme.bg],
+                  stops: const [0.3, 1.0],
+                )),
+              )),
+              // File type badge — top right
+              Positioned(
+                top: MediaQuery.of(context).padding.top + 58,
+                right: 20,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: fileInfo.color,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [BoxShadow(color: fileInfo.color.withOpacity(0.35),
+                        blurRadius: 10, offset: const Offset(0, 4))],
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(fileInfo.icon, size: 12, color: Colors.white),
+                    const SizedBox(width: 5),
+                    Text(fileInfo.label, style: const TextStyle(
+                        fontFamily: 'DM Sans', fontSize: 11,
+                        fontWeight: FontWeight.w700, color: Colors.white)),
+                  ]),
                 ),
               ),
-            ),
+            ]),
           ),
-        if ((_pdfLoaded == false && _fileUrl != null && _pdfTimeout) || _pdfTimeout)
-          Positioned.fill(
-            child: Container(
-              color: const Color(0xFF3A3A3A),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
-                    const SizedBox(height: 18),
-                    const Text(
-                      'Failed to load PDF file.',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontFamily: 'DM Sans',
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _fileUrl ?? '',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 12,
-                        fontFamily: 'DM Sans',
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+        ),
+
+        // ── Metadata + CTA ────────────────────────────────────────────────
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(22, 0, 22, 0),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+              // Content type badge
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.10),
+                  borderRadius: BorderRadius.circular(20),
                 ),
+                child: Text(ct.toUpperCase(),
+                    style: TextStyle(fontFamily: 'DM Sans', fontSize: 10,
+                        fontWeight: FontWeight.w800, letterSpacing: 1.1,
+                        color: AppColors.primary)),
               ),
+              const SizedBox(height: 10),
+
+              Text(title,
+                  style: TextStyle(fontFamily: 'PlayfairDisplay', fontSize: 26,
+                      fontWeight: FontWeight.w800, color: theme.text, height: 1.2)),
+              if (subtitle != null && subtitle.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(subtitle, style: TextStyle(fontFamily: 'DM Sans', fontSize: 15,
+                    color: theme.subText, fontStyle: FontStyle.italic)),
+              ],
+              const SizedBox(height: 12),
+
+              Wrap(spacing: 16, runSpacing: 8, children: [
+                if (author != null && author.isNotEmpty)
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.person_outline_rounded, size: 14, color: theme.subText),
+                    const SizedBox(width: 4),
+                    Text(author, style: TextStyle(fontFamily: 'DM Sans', fontSize: 13,
+                        fontWeight: FontWeight.w600, color: theme.text)),
+                  ]),
+                if (publisher != null && publisher.isNotEmpty)
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.business_outlined, size: 14, color: theme.subText),
+                    const SizedBox(width: 4),
+                    Text(publisher, style: TextStyle(fontFamily: 'DM Sans',
+                        fontSize: 13, color: theme.subText)),
+                  ]),
+              ]),
+              const SizedBox(height: 12),
+
+              Wrap(spacing: 16, runSpacing: 8, children: [
+                if (pageCount != null)
+                  _statChip(Icons.menu_book_outlined, '$pageCount pages', theme),
+                _statChip(Icons.language_rounded, language.toUpperCase(), theme),
+                if ((c['total_reviews'] as int? ?? 0) > 0)
+                  _statChip(Icons.star_rounded, '${c['total_reviews']} reviews', theme,
+                      iconColor: const Color(0xFFF59E0B)),
+              ]),
+              const SizedBox(height: 28),
+
+              // ── PRIMARY READ BUTTON ─────────────────────────────────────
+              _buildOpenWithExternalButton(fileInfo, theme),
+              const SizedBox(height: 28),
+
+              // ── Divider ─────────────────────────────────────────────────
+              _sectionDivider('ABOUT THIS CONTENT', theme),
+              const SizedBox(height: 20),
+
+              // ── Description ──────────────────────────────────────────────
+              if (description != null && description.isNotEmpty)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: description.split(RegExp(r'\n{2,}')).map((p) {
+                    final t = p.trim();
+                    if (t.isEmpty) return const SizedBox(height: 8);
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 18),
+                      child: Text(t, style: TextStyle(
+                        fontFamily: _settings.fontFamily,
+                        fontSize: _settings.fontSize,
+                        height: _settings.lineHeight,
+                        color: theme.text,
+                        letterSpacing: 0.12,
+                      )),
+                    );
+                  }).toList(),
+                )
+              else
+                Text('No description available.',
+                    style: TextStyle(fontFamily: 'DM Sans', fontSize: 14,
+                        color: theme.subText, fontStyle: FontStyle.italic)),
+            ]),
+          ),
+        ),
+
+        // ── Back cover ────────────────────────────────────────────────────
+        if (backpage != null && backpage.isNotEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 32, 22, 0),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                _sectionDivider('BACK COVER', theme),
+                const SizedBox(height: 16),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: CachedNetworkImage(imageUrl: backpage, width: double.infinity,
+                      fit: BoxFit.fitWidth,
+                      errorWidget: (_, __, ___) => const SizedBox.shrink()),
+                ),
+              ]),
             ),
           ),
+
+        SliverToBoxAdapter(
+          child: SizedBox(height: MediaQuery.of(context).padding.bottom + 100),
+        ),
       ],
     );
   }
 
+  // ── "Open in App" button ──────────────────────────────────────────────────
+  Widget _buildOpenWithExternalButton(_FileTypeInfo fileInfo, _ReaderTheme theme) {
+    final isWeb = kIsWeb;
+    final label = isWeb ? 'Open in Browser' : 'Open in App';
+    final subLabel = isWeb
+        ? 'Opens in a new browser tab'
+        : 'Opens with ${fileInfo.suggestedApps.take(2).join(', ')} or your default reader';
+
+    return Column(children: [
+      // Main open button
+      SizedBox(
+        width: double.infinity,
+        height: 56,
+        child: ElevatedButton(
+          onPressed: _isLaunching ? null : _openWithExternalApp,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            disabledBackgroundColor: AppColors.primary.withOpacity(0.6),
+          ),
+          child: _isLaunching
+              ? const SizedBox(
+                  width: 22, height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2.5,
+                      valueColor: AlwaysStoppedAnimation(Colors.white)))
+              : Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      isWeb ? Icons.open_in_new_rounded : Icons.open_in_browser,
+                      size: 18, color: Colors.white),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(label, style: const TextStyle(
+                      fontFamily: 'DM Sans', fontSize: 16,
+                      fontWeight: FontWeight.w700)),
+                ]),
+        ),
+      ),
+      const SizedBox(height: 10),
+      // Sub-label: shows which apps can open it
+      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(Icons.info_outline_rounded, size: 12,
+            color: theme.subText.withOpacity(0.7)),
+        const SizedBox(width: 5),
+        Flexible(
+          child: Text(subLabel,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontFamily: 'DM Sans', fontSize: 11,
+                  color: theme.subText.withOpacity(0.8))),
+        ),
+      ]),
+      // Compatible apps row
+      if (!isWeb) ...[
+        const SizedBox(height: 14),
+        _buildCompatibleAppsRow(fileInfo, theme),
+      ],
+    ]);
+  }
+
+  // ── Compatible apps chips row ─────────────────────────────────────────────
+  Widget _buildCompatibleAppsRow(_FileTypeInfo fileInfo, _ReaderTheme theme) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Compatible apps on your device:',
+          style: TextStyle(fontFamily: 'DM Sans', fontSize: 11,
+              fontWeight: FontWeight.w600, color: theme.subText)),
+      const SizedBox(height: 8),
+      Wrap(
+        spacing: 8, runSpacing: 8,
+        children: fileInfo.suggestedApps.map((app) => Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: theme.surface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: theme.divider),
+          ),
+          child: Text(app, style: TextStyle(fontFamily: 'DM Sans', fontSize: 11,
+              fontWeight: FontWeight.w600, color: theme.subText)),
+        )).toList(),
+      ),
+    ]);
+  }
+
+  Widget _coverFallback(_FileTypeInfo fileInfo) => Container(
+    color: fileInfo.color.withOpacity(0.08),
+    child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Icon(fileInfo.icon, size: 72, color: fileInfo.color.withOpacity(0.4)),
+      const SizedBox(height: 12),
+      Text(fileInfo.label, style: TextStyle(fontFamily: 'DM Sans', fontSize: 13,
+          color: fileInfo.color.withOpacity(0.5), fontWeight: FontWeight.w600)),
+    ])),
+  );
+
+  Widget _sectionDivider(String label, _ReaderTheme theme) => Row(children: [
+    Expanded(child: Divider(color: theme.divider, thickness: 1)),
+    Padding(padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: Text(label, style: TextStyle(fontFamily: 'DM Sans', fontSize: 10,
+            fontWeight: FontWeight.w700, letterSpacing: 1.4, color: theme.subText))),
+    Expanded(child: Divider(color: theme.divider, thickness: 1)),
+  ]);
+
   // ═══════════════════════════════════════════════════════════════════════════
-  // IMAGE VIEWER / CONTENT DETAIL VIEW
-  //
-  // Two modes:
-  //   A) Real multi-page image content (file_url is an image) → swipeable pages
-  //   B) Ebook/document with no uploaded file (file_url = null) → rich detail
-  //      page: full-bleed cover + metadata + description, like Wattpad's
-  //      book landing page when a chapter hasn't been added yet.
+  // IMAGE VIEWER
   // ═══════════════════════════════════════════════════════════════════════════
   Widget _buildImageViewer() {
     final cover    = _content?['cover_image_url']    as String?;
     final backpage = _content?['backpage_image_url'] as String?;
     final hasRealFile = _fileUrl != null && _fileUrl!.isNotEmpty;
 
-    // Mode A: actual image file(s) → swipeable page viewer
     if (hasRealFile) {
       final images = <String>[];
-      if (cover    != null && cover.isNotEmpty)                       images.add(cover);
-      if (_fileUrl != null && _fileUrl!.isNotEmpty && _fileUrl != cover) images.add(_fileUrl!);
-      if (backpage != null && backpage.isNotEmpty && backpage != cover)  images.add(backpage);
+      if (cover    != null && cover.isNotEmpty)                            images.add(cover);
+      if (_fileUrl != null && _fileUrl!.isNotEmpty && _fileUrl != cover)   images.add(_fileUrl!);
+      if (backpage != null && backpage.isNotEmpty && backpage != cover)     images.add(backpage);
 
       if (images.isNotEmpty) {
         return _ImagePageViewer(
@@ -750,17 +1051,12 @@ class _ContentReaderPageState extends State<ContentReaderPage>
       }
     }
 
-    // Mode B: no real file — show rich scrollable content detail page.
-    // cover + backpage are shown as the visual content.
     return _buildContentDetailPage(cover, backpage);
   }
 
-  // ── Rich content detail page (no uploadable file yet) ────────────────────
-  // Shown when content_upload sets file_url = null.
-  // Displays: full-bleed cover → metadata → description → backpage.
   Widget _buildContentDetailPage(String? cover, String? backpage) {
-    final theme = _settings.theme;
-    final c = _content!;
+    final theme       = _settings.theme;
+    final c           = _content!;
     final title       = c['title']        as String? ?? 'Untitled';
     final subtitle    = c['subtitle']     as String?;
     final author      = c['author']       as String?;
@@ -775,72 +1071,49 @@ class _ContentReaderPageState extends State<ContentReaderPage>
       controller: _scrollCtrl,
       physics: const BouncingScrollPhysics(),
       slivers: [
-
-        // ── Full-bleed cover hero ──────────────────────────────────────────
         SliverToBoxAdapter(
           child: SizedBox(
             height: MediaQuery.of(context).size.height * 0.62,
             child: Stack(fit: StackFit.expand, children: [
               if (cover != null && cover.isNotEmpty)
-                CachedNetworkImage(
-                  imageUrl: cover,
-                  fit: BoxFit.cover,
-                  errorWidget: (_, __, ___) => Container(
-                    color: AppColors.primary.withOpacity(0.08),
-                    child: Center(child: Icon(Icons.menu_book_rounded,
-                        size: 80, color: AppColors.primary.withOpacity(0.3))),
-                  ),
-                )
+                CachedNetworkImage(imageUrl: cover, fit: BoxFit.cover,
+                    errorWidget: (_, __, ___) => Container(
+                        color: AppColors.primary.withOpacity(0.08),
+                        child: Center(child: Icon(Icons.menu_book_rounded,
+                            size: 80, color: AppColors.primary.withOpacity(0.3)))))
               else
-                Container(
-                  color: AppColors.primary.withOpacity(0.06),
-                  child: Center(child: Icon(Icons.menu_book_rounded,
-                      size: 80, color: AppColors.primary.withOpacity(0.25))),
-                ),
-              // Gradient fade into content below
+                Container(color: AppColors.primary.withOpacity(0.06),
+                    child: Center(child: Icon(Icons.menu_book_rounded,
+                        size: 80, color: AppColors.primary.withOpacity(0.25)))),
               Positioned(bottom: 0, left: 0, right: 0,
                 child: Container(height: 180, decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, theme.bg],
-                  ),
-                )),
-              ),
-              // Top padding for toolbar
-              SizedBox(height: MediaQuery.of(context).padding.top + 56),
+                  gradient: LinearGradient(begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.transparent, theme.bg])))),
             ]),
           ),
         ),
-
-        // ── Metadata card ──────────────────────────────────────────────────
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(22, 0, 22, 0),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              // Content type badge
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.10),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(ct.toUpperCase(),
-                    style: TextStyle(fontFamily: 'DM Sans', fontSize: 10,
-                        fontWeight: FontWeight.w800, letterSpacing: 1.1,
-                        color: AppColors.primary)),
+                decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.10),
+                    borderRadius: BorderRadius.circular(20)),
+                child: Text(ct.toUpperCase(), style: TextStyle(fontFamily: 'DM Sans',
+                    fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.1,
+                    color: AppColors.primary)),
               ),
               const SizedBox(height: 10),
-              // Title
-              Text(title,
-                  style: TextStyle(fontFamily: 'PlayfairDisplay', fontSize: 28,
-                      fontWeight: FontWeight.w800, color: theme.text, height: 1.2)),
+              Text(title, style: TextStyle(fontFamily: 'PlayfairDisplay', fontSize: 28,
+                  fontWeight: FontWeight.w800, color: theme.text, height: 1.2)),
               if (subtitle != null && subtitle.isNotEmpty) ...[
                 const SizedBox(height: 6),
                 Text(subtitle, style: TextStyle(fontFamily: 'DM Sans', fontSize: 16,
                     color: theme.subText, fontStyle: FontStyle.italic)),
               ],
               const SizedBox(height: 14),
-              // Author / publisher row
               Wrap(spacing: 16, runSpacing: 8, children: [
                 if (author != null && author.isNotEmpty)
                   Row(mainAxisSize: MainAxisSize.min, children: [
@@ -858,7 +1131,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
                   ]),
               ]),
               const SizedBox(height: 14),
-              // Stats chips
               Wrap(spacing: 16, runSpacing: 8, children: [
                 if (pageCount != null)
                   _statChip(Icons.menu_book_outlined, '$pageCount pages', theme),
@@ -870,103 +1142,64 @@ class _ContentReaderPageState extends State<ContentReaderPage>
                       iconColor: const Color(0xFFF59E0B)),
               ]),
               const SizedBox(height: 24),
-
-              // ── Divider ─────────────────────────────────────────────────
-              Row(children: [
-                Expanded(child: Divider(color: theme.divider, thickness: 1)),
-                Padding(padding: const EdgeInsets.symmetric(horizontal: 14),
-                    child: Text('ABOUT THIS CONTENT',
-                        style: TextStyle(fontFamily: 'DM Sans', fontSize: 10,
-                            fontWeight: FontWeight.w700, letterSpacing: 1.4,
-                            color: theme.subText))),
-                Expanded(child: Divider(color: theme.divider, thickness: 1)),
-              ]),
+              _sectionDivider('ABOUT THIS CONTENT', theme),
               const SizedBox(height: 20),
-
-              // ── Description ──────────────────────────────────────────────
               if (description != null && description.isNotEmpty)
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: (description?.split(RegExp(r'\n{2,}')) ?? []).map((p) {
+                  children: description.split(RegExp(r'\n{2,}')).map((p) {
                     final t = p.trim();
                     if (t.isEmpty) return const SizedBox(height: 8);
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 18),
-                      child: Text(
-                        t,
-                        style: TextStyle(
-                          fontFamily: _settings.fontFamily,
-                          fontSize: _settings.fontSize,
-                          height: _settings.lineHeight,
-                          color: theme.text,
-                          letterSpacing: 0.12,
-                        ),
-                      ),
+                      child: Text(t, style: TextStyle(
+                        fontFamily: _settings.fontFamily,
+                        fontSize: _settings.fontSize,
+                        height: _settings.lineHeight,
+                        color: theme.text,
+                        letterSpacing: 0.12,
+                      )),
                     );
                   }).toList(),
                 )
               else
-                Text('No description available.',
-                    style: TextStyle(fontFamily: 'DM Sans', fontSize: 14,
-                        color: theme.subText, fontStyle: FontStyle.italic)),
+                Text('No description available.', style: TextStyle(fontFamily: 'DM Sans',
+                    fontSize: 14, color: theme.subText, fontStyle: FontStyle.italic)),
             ]),
           ),
         ),
-
-        // ── Back cover image ───────────────────────────────────────────────
         if (backpage != null && backpage.isNotEmpty)
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(22, 32, 22, 0),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  Expanded(child: Divider(color: theme.divider, thickness: 1)),
-                  Padding(padding: const EdgeInsets.symmetric(horizontal: 14),
-                      child: Text('BACK COVER',
-                          style: TextStyle(fontFamily: 'DM Sans', fontSize: 10,
-                              fontWeight: FontWeight.w700, letterSpacing: 1.4,
-                              color: theme.subText))),
-                  Expanded(child: Divider(color: theme.divider, thickness: 1)),
-                ]),
+                _sectionDivider('BACK COVER', theme),
                 const SizedBox(height: 16),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: CachedNetworkImage(
-                    imageUrl: backpage,
-                    width: double.infinity,
-                    fit: BoxFit.fitWidth,
-                    errorWidget: (_, __, ___) => const SizedBox.shrink(),
-                  ),
-                ),
+                ClipRRect(borderRadius: BorderRadius.circular(12),
+                    child: CachedNetworkImage(imageUrl: backpage, width: double.infinity,
+                        fit: BoxFit.fitWidth,
+                        errorWidget: (_, __, ___) => const SizedBox.shrink())),
               ]),
             ),
           ),
-
-        // ── Bottom padding ─────────────────────────────────────────────────
-        SliverToBoxAdapter(
-          child: SizedBox(height: MediaQuery.of(context).padding.bottom + 100),
-        ),
+        SliverToBoxAdapter(child: SizedBox(height: MediaQuery.of(context).padding.bottom + 100)),
       ],
     );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TEXT VIEWER
-  // Wattpad-style scrollable paragraphs. Used when there is no file,
-  // or as fallback if PDF/image fails. Respects all reader settings.
   // ═══════════════════════════════════════════════════════════════════════════
   Widget _buildTextViewer(_ReaderTheme theme) {
     return CustomScrollView(
       controller: _scrollCtrl,
       physics: const BouncingScrollPhysics(),
       slivers: [
-        SliverToBoxAdapter(
-            child: SizedBox(height: MediaQuery.of(context).padding.top + 56)),
+        SliverToBoxAdapter(child: SizedBox(height: MediaQuery.of(context).padding.top + 56)),
         SliverToBoxAdapter(child: _buildCoverHeader(theme)),
         SliverToBoxAdapter(child: _buildChapterDivider(theme)),
         SliverPadding(
-          padding: EdgeInsets.fromLTRB(
-              22, 4, 22, MediaQuery.of(context).padding.bottom + 80),
+          padding: EdgeInsets.fromLTRB(22, 4, 22, MediaQuery.of(context).padding.bottom + 80),
           sliver: SliverToBoxAdapter(
             child: _bodyText != null && _bodyText!.isNotEmpty
                 ? _buildParagraphs(theme)
@@ -986,14 +1219,13 @@ class _ContentReaderPageState extends State<ContentReaderPage>
         if (t.isEmpty) return const SizedBox(height: 8);
         return Padding(
           padding: const EdgeInsets.only(bottom: 20),
-          child: Text(t,
-              style: TextStyle(
-                fontFamily: _settings.fontFamily,
-                fontSize: _settings.fontSize,
-                height: _settings.lineHeight,
-                color: theme.text,
-                letterSpacing: 0.12,
-              )),
+          child: Text(t, style: TextStyle(
+            fontFamily: _settings.fontFamily,
+            fontSize: _settings.fontSize,
+            height: _settings.lineHeight,
+            color: theme.text,
+            letterSpacing: 0.12,
+          )),
         );
       }).toList(),
     );
@@ -1003,17 +1235,15 @@ class _ContentReaderPageState extends State<ContentReaderPage>
       margin: const EdgeInsets.symmetric(vertical: 24),
       padding: const EdgeInsets.all(28),
       decoration: BoxDecoration(color: theme.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: theme.divider)),
+          borderRadius: BorderRadius.circular(16), border: Border.all(color: theme.divider)),
       child: Column(children: [
         Container(width: 64, height: 64,
             decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.08),
                 shape: BoxShape.circle),
             child: Icon(Icons.info_outline_rounded, size: 30, color: AppColors.primary)),
         const SizedBox(height: 14),
-        Text('No Preview Available',
-            style: TextStyle(fontFamily: 'PlayfairDisplay', fontSize: 17,
-                fontWeight: FontWeight.w800, color: theme.text)),
+        Text('No Preview Available', style: TextStyle(fontFamily: 'PlayfairDisplay',
+            fontSize: 17, fontWeight: FontWeight.w800, color: theme.text)),
         const SizedBox(height: 8),
         Text('No readable content available for this item. '
             'Please contact the publisher for access.',
@@ -1022,7 +1252,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
                 color: theme.subText, height: 1.6)),
       ]));
 
-  // ── Cover header widget (text mode) ───────────────────────────────────────
   Widget _buildCoverHeader(_ReaderTheme theme) {
     final c         = _content!;
     final cover     = c['cover_image_url'] as String?;
@@ -1044,24 +1273,21 @@ class _ContentReaderPageState extends State<ContentReaderPage>
                 errorWidget: (_, __, ___) => _coverPlaceholder(theme, 260)),
             Positioned(bottom: 0, left: 0, right: 0,
                 child: Container(height: 100, decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                        begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                    gradient: LinearGradient(begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
                         colors: [Colors.transparent, theme.surface.withOpacity(0.95)])))),
           ])
         else _coverPlaceholder(theme, 160),
-
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-              decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.10),
+              decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.10),
                   borderRadius: BorderRadius.circular(20)),
-              child: Text(ct.toUpperCase(),
-                  style: TextStyle(fontFamily: 'DM Sans', fontSize: 10,
-                      fontWeight: FontWeight.w800, letterSpacing: 1.1,
-                      color: AppColors.primary)),
+              child: Text(ct.toUpperCase(), style: TextStyle(fontFamily: 'DM Sans',
+                  fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1.1,
+                  color: AppColors.primary)),
             ),
             const SizedBox(height: 10),
             Text(title, style: TextStyle(fontFamily: 'PlayfairDisplay', fontSize: 26,
@@ -1129,18 +1355,17 @@ class _ContentReaderPageState extends State<ContentReaderPage>
       child: Row(children: [
         Expanded(child: Divider(color: theme.divider, thickness: 1)),
         Padding(padding: const EdgeInsets.symmetric(horizontal: 14),
-            child: Text('BEGIN READING',
-                style: TextStyle(fontFamily: 'DM Sans', fontSize: 10,
-                    fontWeight: FontWeight.w700, letterSpacing: 1.4, color: theme.subText))),
+            child: Text('BEGIN READING', style: TextStyle(fontFamily: 'DM Sans',
+                fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.4,
+                color: theme.subText))),
         Expanded(child: Divider(color: theme.divider, thickness: 1)),
       ]));
 
   // ─────────────────────────────────────────────────────────────────────────
   // TOP BAR
-  // Semi-transparent dark overlay in PDF/image mode; themed surface in text mode.
   // ─────────────────────────────────────────────────────────────────────────
   Widget _buildTopBar(_ReaderTheme theme) {
-    final isMedia = _viewerMode != _ViewerMode.text;
+    final isMedia  = _viewerMode == _ViewerMode.image;
     final barBg    = isMedia ? const Color(0xCC141420) : theme.surface;
     final titleClr = isMedia ? Colors.white : (theme.isDark ? const Color(0xFFE4E2D8) : const Color(0xFF111827));
     final iconClr  = isMedia ? Colors.white70 : theme.subText;
@@ -1154,12 +1379,10 @@ class _ContentReaderPageState extends State<ContentReaderPage>
             blurRadius: 8, offset: const Offset(0, 2))],
       ),
       child: SizedBox(height: 52, child: Row(children: [
-        // Back
         IconButton(
           icon: Icon(Icons.arrow_back_ios_new_rounded, size: 18, color: titleClr),
           onPressed: () => Navigator.pop(context),
         ),
-        // Title
         Expanded(child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1168,12 +1391,12 @@ class _ContentReaderPageState extends State<ContentReaderPage>
                   maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontFamily: 'PlayfairDisplay', fontSize: 14,
                       fontWeight: FontWeight.w700, color: titleClr)),
-              // PDF on web: page tracking unavailable (cross-origin iframe)
-              if (_viewerMode == _ViewerMode.pdf && _pdfLoaded)
-                Text('Use PDF toolbar to navigate pages',
-                    style: TextStyle(fontFamily: 'DM Sans', fontSize: 10, color: iconClr)),
+              if (_viewerMode == _ViewerMode.externalFile && _hasFile)
+                Text(
+                  kIsWeb ? 'Tap "Open in Browser" to read' : 'Tap "Open in App" to read',
+                  style: TextStyle(fontFamily: 'DM Sans', fontSize: 10, color: iconClr),
+                ),
             ])),
-        // Bookmark
         IconButton(
           icon: Icon(
               _bookmarked ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
@@ -1181,12 +1404,20 @@ class _ContentReaderPageState extends State<ContentReaderPage>
               color: _bookmarked ? AppColors.primary : iconClr),
           onPressed: _toggleBookmark,
         ),
-        // Text settings (text mode only)
         if (_viewerMode == _ViewerMode.text)
           IconButton(
             icon: Icon(Icons.text_fields_rounded, size: 20, color: iconClr),
             onPressed: () => setState(() => _showSettings = !_showSettings),
             tooltip: 'Reader settings',
+          ),
+        // Quick-launch button in top bar for external files
+        if (_viewerMode == _ViewerMode.externalFile && _hasFile)
+          IconButton(
+            icon: Icon(
+              kIsWeb ? Icons.open_in_new_rounded : Icons.open_in_browser,
+              size: 20, color: AppColors.primary),
+            onPressed: _isLaunching ? null : _openWithExternalApp,
+            tooltip: kIsWeb ? 'Open in browser' : 'Open in app',
           ),
       ])),
     );
@@ -1196,7 +1427,7 @@ class _ContentReaderPageState extends State<ContentReaderPage>
   // BOTTOM BAR
   // ─────────────────────────────────────────────────────────────────────────
   Widget _buildBottomBar(_ReaderTheme theme) {
-    final isMedia = _viewerMode != _ViewerMode.text;
+    final isMedia = _viewerMode == _ViewerMode.image;
     final barBg   = isMedia ? const Color(0xCC141420) : theme.surface;
     final subClr  = isMedia ? Colors.white54 : theme.subText;
 
@@ -1209,36 +1440,36 @@ class _ContentReaderPageState extends State<ContentReaderPage>
         border: isMedia ? null : Border(top: BorderSide(color: theme.divider, width: 0.5)),
       ),
       child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        // Progress label
         Text(
-          _viewerMode == _ViewerMode.pdf
-              ? (_pdfLoaded ? 'PDF loaded ✓' : 'Loading…')
+          _viewerMode == _ViewerMode.externalFile
+              ? (_hasFile ? (_FileTypeInfo.fromUrl(_fileUrl).label) : 'No file attached')
               : '${(_progress * 100).toStringAsFixed(0)}%  ·  $_estMinutes min',
           style: TextStyle(fontFamily: 'DM Sans', fontSize: 12, color: subClr),
         ),
-        // Focus mode
-        GestureDetector(
-          onTap: () => _setImmersive(!_settings.immersive),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: _settings.immersive ? AppColors.primary : AppColors.primary.withOpacity(0.10),
-              borderRadius: BorderRadius.circular(8),
+        if (_viewerMode != _ViewerMode.externalFile)
+          GestureDetector(
+            onTap: () => _setImmersive(!_settings.immersive),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: _settings.immersive ? AppColors.primary : AppColors.primary.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(_settings.immersive ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
+                    size: 14,
+                    color: _settings.immersive ? Colors.white : AppColors.primary),
+                const SizedBox(width: 4),
+                Text(_settings.immersive ? 'Exit Focus' : 'Focus Mode',
+                    style: TextStyle(fontFamily: 'DM Sans', fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: _settings.immersive ? Colors.white : AppColors.primary)),
+              ]),
             ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(_settings.immersive ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
-                  size: 14,
-                  color: _settings.immersive ? Colors.white : AppColors.primary),
-              const SizedBox(width: 4),
-              Text(_settings.immersive ? 'Exit Focus' : 'Focus Mode',
-                  style: TextStyle(fontFamily: 'DM Sans', fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: _settings.immersive ? Colors.white : AppColors.primary)),
-            ]),
-          ),
-        ),
-        // Review CTA
+          )
+        else
+          const SizedBox.shrink(),
         GestureDetector(
           onTap: _showReviewPrompt,
           child: Text('Rate & Review',
@@ -1252,7 +1483,7 @@ class _ContentReaderPageState extends State<ContentReaderPage>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SETTINGS PANEL (text mode only)
+  // SETTINGS PANEL
   // ─────────────────────────────────────────────────────────────────────────
   Widget _buildSettingsPanel(_ReaderTheme theme) {
     return Positioned(
@@ -1370,9 +1601,8 @@ class _ContentReaderPageState extends State<ContentReaderPage>
             icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20, color: Color(0xFF1A1A2E)),
             onPressed: () => Navigator.pop(context),
           ),
-          title: Text(gateTitle,
-              style: const TextStyle(fontFamily: 'PlayfairDisplay', fontSize: 16,
-                  fontWeight: FontWeight.w700, color: Color(0xFF111827))),
+          title: Text(gateTitle, style: const TextStyle(fontFamily: 'PlayfairDisplay',
+              fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF111827))),
         ),
         SliverToBoxAdapter(child: Padding(
           padding: const EdgeInsets.all(28),
@@ -1382,8 +1612,7 @@ class _ContentReaderPageState extends State<ContentReaderPage>
               Stack(alignment: Alignment.center, children: [
                 ClipRRect(borderRadius: BorderRadius.circular(16),
                     child: ColorFiltered(
-                      colorFilter: ColorFilter.mode(
-                          Colors.black.withOpacity(0.45), BlendMode.darken),
+                      colorFilter: ColorFilter.mode(Colors.black.withOpacity(0.45), BlendMode.darken),
                       child: CachedNetworkImage(imageUrl: cover, width: 140, height: 200,
                           fit: BoxFit.cover,
                           errorWidget: (_, __, ___) => Container(width: 140, height: 200,
@@ -1406,8 +1635,8 @@ class _ContentReaderPageState extends State<ContentReaderPage>
                 const SizedBox(height: 6),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-                  decoration: BoxDecoration(
-                      color: AppColors.primary, borderRadius: BorderRadius.circular(20)),
+                  decoration: BoxDecoration(color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(20)),
                   child: Text('KSH ${price.toStringAsFixed(0)}',
                       style: const TextStyle(fontFamily: 'DM Sans', fontSize: 13,
                           fontWeight: FontWeight.w800, color: Colors.white)),
@@ -1416,8 +1645,8 @@ class _ContentReaderPageState extends State<ContentReaderPage>
               const SizedBox(height: 28),
             ] else ...[
               Container(width: 90, height: 90,
-                  decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.07), shape: BoxShape.circle),
+                  decoration: BoxDecoration(color: AppColors.primary.withOpacity(0.07),
+                      shape: BoxShape.circle),
                   child: Icon(gateIcon, size: 44, color: AppColors.primary)),
               const SizedBox(height: 24),
             ],
@@ -1469,7 +1698,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
     );
   }
 
-  // ── Loading ───────────────────────────────────────────────────────────────
   Widget _loadingView() => Scaffold(
       backgroundColor: const Color(0xFFF8F4EE),
       body: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
@@ -1482,9 +1710,146 @@ class _ContentReaderPageState extends State<ContentReaderPage>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// OPEN WITH SHEET
+// Bottom sheet shown before handing off to an external app.
+// Tells the user what file type will open and what apps can read it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _OpenWithSheet extends StatelessWidget {
+  final _FileTypeInfo fileInfo;
+  final String fileName;
+  final VoidCallback onOpen;
+  final VoidCallback onCancel;
+
+  // ignore: prefer_const_constructors_in_immutables
+  _OpenWithSheet({
+    required this.fileInfo,
+    required this.fileName,
+    required this.onOpen,
+    required this.onCancel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: EdgeInsets.fromLTRB(24, 8, 24, 32 + MediaQuery.of(context).padding.bottom),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        // Handle
+        Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 24),
+            decoration: BoxDecoration(color: const Color(0xFFD1D5DB),
+                borderRadius: BorderRadius.circular(2))),
+
+        // File type icon
+        Container(
+          width: 72, height: 72,
+          decoration: BoxDecoration(
+            color: fileInfo.color.withOpacity(0.10),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(fileInfo.icon, size: 34, color: fileInfo.color),
+        ),
+        const SizedBox(height: 16),
+
+        Text('Open ${fileInfo.label}',
+            style: const TextStyle(fontFamily: 'PlayfairDisplay', fontSize: 20,
+                fontWeight: FontWeight.w800, color: Color(0xFF111827))),
+        const SizedBox(height: 6),
+        Text(fileName, maxLines: 2, overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontFamily: 'DM Sans', fontSize: 13,
+                color: Color(0xFF6B7080))),
+        const SizedBox(height: 20),
+
+        // Info card
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF9FAFB),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Your device will open this with:',
+                style: TextStyle(fontFamily: 'DM Sans', fontSize: 12,
+                    fontWeight: FontWeight.w600, color: Color(0xFF374151))),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8, runSpacing: 8,
+              children: fileInfo.suggestedApps.map((app) => Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04),
+                      blurRadius: 4, offset: const Offset(0, 1))],
+                ),
+                child: Text(app, style: const TextStyle(fontFamily: 'DM Sans',
+                    fontSize: 12, fontWeight: FontWeight.w600,
+                    color: Color(0xFF374151))),
+              )).toList(),
+            ),
+            const SizedBox(height: 10),
+            Row(children: [
+              Icon(Icons.info_outline_rounded, size: 12,
+                  color: const Color(0xFF6B7080).withOpacity(0.7)),
+              const SizedBox(width: 6),
+              const Flexible(child: Text(
+                'The file will open in your default app. '
+                'You can change this in your device settings.',
+                style: TextStyle(fontFamily: 'DM Sans', fontSize: 11,
+                    color: Color(0xFF9CA3AF), height: 1.4),
+              )),
+            ]),
+          ]),
+        ),
+        const SizedBox(height: 20),
+
+        // Open button
+        SizedBox(
+          width: double.infinity, height: 52,
+          child: ElevatedButton(
+            onPressed: onOpen,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(fileInfo.icon, size: 18),
+              const SizedBox(width: 10),
+              const Text('Open Now', style: TextStyle(fontFamily: 'DM Sans',
+                  fontSize: 15, fontWeight: FontWeight.w700)),
+            ]),
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // Cancel
+        SizedBox(
+          width: double.infinity, height: 48,
+          child: TextButton(
+            onPressed: onCancel,
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF6B7080),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+            child: const Text('Cancel', style: TextStyle(fontFamily: 'DM Sans',
+                fontSize: 14, fontWeight: FontWeight.w600)),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // IMAGE PAGE VIEWER
-// Horizontal swipe between pages, pinch-to-zoom, page dots, edge tap zones.
-// Mirrors how Wattpad handles manga/comic/magazine content.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _ImagePageViewer extends StatefulWidget {
@@ -1528,8 +1893,6 @@ class _ImagePageViewerState extends State<_ImagePageViewer> {
   Widget build(BuildContext context) {
     final total = widget.imageUrls.length;
     return Stack(children: [
-
-      // ── Pages ────────────────────────────────────────────────────────────
       PageView.builder(
         controller: _pageCtrl,
         onPageChanged: (i) {
@@ -1561,8 +1924,6 @@ class _ImagePageViewerState extends State<_ImagePageViewer> {
           ),
         ),
       ),
-
-      // ── Page indicator dots ───────────────────────────────────────────────
       if (total > 1)
         Positioned(
           bottom: 88, left: 0, right: 0,
@@ -1581,8 +1942,6 @@ class _ImagePageViewerState extends State<_ImagePageViewer> {
                 )),
           ),
         ),
-
-      // ── Left / Right invisible tap zones (Wattpad-style page turn) ────────
       Positioned(
         left: 0, top: 60, bottom: 72, width: 72,
         child: GestureDetector(
@@ -1597,15 +1956,13 @@ class _ImagePageViewerState extends State<_ImagePageViewer> {
           child: Container(color: Colors.transparent),
         ),
       ),
-
-      // ── Current page label (bottom-centre, subtle) ─────────────────────
       Positioned(
         bottom: 72, left: 0, right: 0,
         child: Center(
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-            decoration: BoxDecoration(
-                color: Colors.black54, borderRadius: BorderRadius.circular(12)),
+            decoration: BoxDecoration(color: Colors.black54,
+                borderRadius: BorderRadius.circular(12)),
             child: Text('${_current + 1} / $total',
                 style: const TextStyle(fontFamily: 'DM Sans',
                     fontSize: 11, color: Colors.white70)),
@@ -1651,8 +2008,7 @@ class _ReviewSheetState extends State<_ReviewSheet> {
   Widget build(BuildContext context) => Container(
       decoration: const BoxDecoration(color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      padding: EdgeInsets.fromLTRB(
-          24, 8, 24, 24 + MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.fromLTRB(24, 8, 24, 24 + MediaQuery.of(context).viewInsets.bottom),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 18),
             decoration: BoxDecoration(color: const Color(0xFFD1D5DB),
@@ -1717,7 +2073,6 @@ class _ReviewSheetState extends State<_ReviewSheet> {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SETTINGS SUB-WIDGETS
-// Non-const constructors required — these hold _ReaderTheme (non-const type).
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _SettingsRow extends StatelessWidget {

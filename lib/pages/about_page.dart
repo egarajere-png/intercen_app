@@ -40,32 +40,32 @@ class AboutPage extends StatelessWidget {
     {
       'name': 'Barack Wandera',
       'role': 'Founder & CEO',
-      'image': 'assets/team/barack-wandera.jpg',
+      'image': 'assets/team/barak.jpeg',
     },
     {
       'name': 'Miriam Achiso',
       'role': 'Operations Manager',
-      'image': 'assets/team/miriam-achiso.jpg',
+      'image': null,
     },
     {
       'name': 'Chelangat Naomi',
       'role': 'Editorial Director',
-      'image': 'assets/team/chelangat-naomi.jpg',
+      'image': 'assets/team/chelangatnaomi.jpeg',
     },
     {
       'name': 'Robert Mutugi',
       'role': 'Design Operations Lead',
-      'image': 'assets/team/robert-mutugi.jpg',
+      'image': null,
     },
     {
       'name': 'Betty Atiemo',
       'role': 'Marketing Lead',
-      'image': 'assets/team/betty-atiemo.jpg',
+      'image': 'assets/team/bettyatiemo.jpeg',
     },
     {
       'name': 'Jere Egara',
       'role': 'Digital Publishing Systems Manager',
-      'image': 'assets/team/jere-egara.jpg',
+      'image': 'assets/team/bahati.jpeg',
     },
   ];
 
@@ -88,7 +88,7 @@ class AboutPage extends StatelessWidget {
       appBar: AppBar(
         title: Text(
           'About',
-          style: textTheme.headline6?.copyWith(
+          style: textTheme.titleLarge?.copyWith(
             fontFamily: 'PlayfairDisplay',
             fontWeight: FontWeight.bold,
             fontSize: 22,
@@ -120,7 +120,7 @@ class AboutPage extends StatelessWidget {
                 children: [
                   Text(
                     'Our Story',
-                    style: textTheme.subtitle1?.copyWith(
+                    style: textTheme.titleMedium?.copyWith(
                       color: AppColors.primary,
                       fontFamily: 'DM Sans',
                       fontWeight: FontWeight.w500,
@@ -130,7 +130,7 @@ class AboutPage extends StatelessWidget {
                   Text(
                     'Championing African Literary Excellence',
                     textAlign: TextAlign.center,
-                    style: textTheme.headline4?.copyWith(
+                    style: textTheme.headlineMedium?.copyWith(
                       color: AppColors.primary,
                       fontFamily: 'PlayfairDisplay',
                       fontWeight: FontWeight.bold,
@@ -140,7 +140,7 @@ class AboutPage extends StatelessWidget {
                   Text(
                     "InterCEN Books is more than a publishing house—we're a movement dedicated to amplifying African voices and bringing world-class literature to readers everywhere.",
                     textAlign: TextAlign.center,
-                    style: textTheme.bodyText1?.copyWith(
+                    style: textTheme.bodyLarge?.copyWith(
                       color: AppColors.charcoal,
                       fontFamily: 'DM Sans',
                     ),
@@ -159,7 +159,7 @@ class AboutPage extends StatelessWidget {
                   children: [
                     Text(
                       stat['value']!,
-                      style: textTheme.headline5?.copyWith(
+                      style: textTheme.headlineSmall?.copyWith(
                         color: AppColors.primary,
                         fontFamily: 'PlayfairDisplay',
                         fontWeight: FontWeight.bold,
@@ -167,7 +167,7 @@ class AboutPage extends StatelessWidget {
                     ),
                     Text(
                       stat['label']!,
-                      style: textTheme.caption?.copyWith(
+                      style: textTheme.bodySmall?.copyWith(
                         color: AppColors.charcoal,
                         fontFamily: 'DM Sans',
                       ),
@@ -202,26 +202,26 @@ class AboutPage extends StatelessWidget {
                           children: [
                             Icon(Icons.flag, color: AppColors.primary),
                             const SizedBox(width: 8),
-                            Text('Mission', style: textTheme.subtitle1?.copyWith(fontWeight: FontWeight.bold)),
+                            Text('Mission', style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
                           ],
                         ),
                         const SizedBox(height: 8),
                         Text(
                           'To discover, nurture, and publish exceptional literary works that reflect the richness of African culture and experience, while making quality books accessible to readers across the continent and beyond.',
-                          style: textTheme.bodyText2?.copyWith(color: AppColors.charcoal),
+                          style: textTheme.bodyMedium?.copyWith(color: AppColors.charcoal),
                         ),
                         const SizedBox(height: 24),
                         Row(
                           children: [
                             Icon(Icons.visibility, color: AppColors.primary),
                             const SizedBox(width: 8),
-                            Text('Vision', style: textTheme.subtitle1?.copyWith(fontWeight: FontWeight.bold)),
+                            Text('Vision', style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
                           ],
                         ),
                         const SizedBox(height: 8),
                         Text(
                           'To be the leading publisher of African literature, recognized for quality, innovation, and impact.',
-                          style: textTheme.bodyText2?.copyWith(color: AppColors.charcoal),
+                          style: textTheme.bodyMedium?.copyWith(color: AppColors.charcoal),
                         ),
                       ],
                     ),
@@ -236,14 +236,14 @@ class AboutPage extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 16),
               child: Column(
                 children: [
-                  Text('Philosophy', style: textTheme.subtitle1?.copyWith(color: AppColors.primary)),
+                  Text('Philosophy', style: textTheme.titleMedium?.copyWith(color: AppColors.primary)),
                   const SizedBox(height: 8),
-                  Text('Our Publishing Philosophy', style: textTheme.headline6?.copyWith(fontWeight: FontWeight.bold)),
+                  Text('Our Publishing Philosophy', style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   Text(
                     'We believe that great books have the power to transform minds, bridge cultures, and inspire change. Our publishing approach is guided by these core principles.',
                     textAlign: TextAlign.center,
-                    style: textTheme.bodyText2?.copyWith(color: AppColors.charcoal),
+                    style: textTheme.bodyMedium?.copyWith(color: AppColors.charcoal),
                   ),
                   const SizedBox(height: 24),
                   Row(
@@ -278,9 +278,9 @@ class AboutPage extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 16),
               child: Column(
                 children: [
-                  Text('What Drives Us', style: textTheme.subtitle1?.copyWith(color: AppColors.primary)),
+                  Text('What Drives Us', style: textTheme.titleMedium?.copyWith(color: AppColors.primary)),
                   const SizedBox(height: 8),
-                  Text('Our Core Values', style: textTheme.headline6?.copyWith(fontWeight: FontWeight.bold)),
+                  Text('Our Core Values', style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 24),
                   Wrap(
                     spacing: 16,
@@ -297,14 +297,14 @@ class AboutPage extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 16),
               child: Column(
                 children: [
-                  Text('Global Reach', style: textTheme.subtitle1?.copyWith(color: AppColors.primary)),
+                  Text('Global Reach', style: textTheme.titleMedium?.copyWith(color: AppColors.primary)),
                   const SizedBox(height: 8),
-                  Text('Translation Services', style: textTheme.headline6?.copyWith(fontWeight: FontWeight.bold)),
+                  Text('Translation Services', style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   Text(
                     'At InterCEN Books, we collaborate with a global network of highly skilled native-language translators, carefully selected based on their subject-matter expertise.',
                     textAlign: TextAlign.center,
-                    style: textTheme.bodyText2?.copyWith(color: AppColors.charcoal),
+                    style: textTheme.bodyMedium?.copyWith(color: AppColors.charcoal),
                   ),
                   const SizedBox(height: 24),
                   Row(
@@ -343,15 +343,15 @@ class AboutPage extends StatelessWidget {
                               children: [
                                 Icon(Icons.description, color: AppColors.primary),
                                 const SizedBox(width: 8),
-                                Text('Document Types', style: textTheme.subtitle1?.copyWith(fontWeight: FontWeight.bold)),
+                                Text('Document Types', style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
                               ],
                             ),
                             const SizedBox(height: 8),
-                            Text('We translate a wide range of documents in any format, including:', style: textTheme.bodyText2?.copyWith(color: AppColors.charcoal)),
+                            Text('We translate a wide range of documents in any format, including:', style: textTheme.bodyMedium?.copyWith(color: AppColors.charcoal)),
                             const SizedBox(height: 8),
                             ...translationDocuments.map((doc) => Padding(
                               padding: const EdgeInsets.symmetric(vertical: 2),
-                              child: Text('• $doc', style: textTheme.bodyText2?.copyWith(color: AppColors.charcoal)),
+                              child: Text('• $doc', style: textTheme.bodyMedium?.copyWith(color: AppColors.charcoal)),
                             )),
                           ],
                         ),
@@ -367,14 +367,14 @@ class AboutPage extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 16),
               child: Column(
                 children: [
-                  Text('Leadership', style: textTheme.subtitle1?.copyWith(color: AppColors.primary)),
+                  Text('Leadership', style: textTheme.titleMedium?.copyWith(color: AppColors.primary)),
                   const SizedBox(height: 8),
-                  Text('Meet Our Team', style: textTheme.headline6?.copyWith(fontWeight: FontWeight.bold)),
+                  Text('Meet Our Team', style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   Text(
                     'Our experienced team combines publishing expertise with a passion for African literature.',
                     textAlign: TextAlign.center,
-                    style: textTheme.bodyText2?.copyWith(color: AppColors.charcoal),
+                    style: textTheme.bodyMedium?.copyWith(color: AppColors.charcoal),
                   ),
                   const SizedBox(height: 24),
                   Wrap(
@@ -392,12 +392,12 @@ class AboutPage extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 16),
               child: Column(
                 children: [
-                  Text('Ready to Work With Us?', style: textTheme.headline6?.copyWith(color: Colors.white, fontWeight: FontWeight.bold)),
+                  Text('Ready to Work With Us?', style: textTheme.titleLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
                   Text(
                     "Whether you're an author looking to publish, a vendor seeking partnership, or a reader exploring great books—we'd love to hear from you.",
                     textAlign: TextAlign.center,
-                    style: textTheme.bodyText2?.copyWith(color: Colors.white70),
+                    style: textTheme.bodyMedium?.copyWith(color: Colors.white70),
                   ),
                   const SizedBox(height: 16),
                   Wrap(
@@ -411,7 +411,7 @@ class AboutPage extends StatelessWidget {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         ),
                         onPressed: () {},
-                        child: Text('Publish with Us', style: textTheme.button?.copyWith(fontWeight: FontWeight.bold)),
+                        child: Text('Publish with Us', style: textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold)),
                       ),
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
@@ -421,7 +421,7 @@ class AboutPage extends StatelessWidget {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         ),
                         onPressed: () {},
-                        child: Text('Explore Books', style: textTheme.button?.copyWith(fontWeight: FontWeight.bold)),
+                        child: Text('Explore Books', style: textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold)),
                       ),
                     ],
                   ),
@@ -446,9 +446,9 @@ class AboutPage extends StatelessWidget {
           children: [
             Icon(icon, color: AppColors.primary, size: 32),
             const SizedBox(height: 8),
-            Text(title, style: textTheme.subtitle1?.copyWith(fontWeight: FontWeight.bold)),
+            Text(title, style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            Text(description, textAlign: TextAlign.center, style: textTheme.bodyText2?.copyWith(color: AppColors.charcoal)),
+            Text(description, textAlign: TextAlign.center, style: textTheme.bodyMedium?.copyWith(color: AppColors.charcoal)),
           ],
         ),
       ),
@@ -467,9 +467,9 @@ class AboutPage extends StatelessWidget {
           children: [
             Icon(value['icon'], color: AppColors.primary, size: 32),
             const SizedBox(height: 8),
-            Text(value['title'], style: textTheme.subtitle1?.copyWith(fontWeight: FontWeight.bold)),
+            Text(value['title'], style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            Text(value['description'], textAlign: TextAlign.center, style: textTheme.bodyText2?.copyWith(color: AppColors.charcoal)),
+            Text(value['description'], textAlign: TextAlign.center, style: textTheme.bodyMedium?.copyWith(color: AppColors.charcoal)),
           ],
         ),
       ),
@@ -486,9 +486,9 @@ class AboutPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: textTheme.subtitle1?.copyWith(fontWeight: FontWeight.bold)),
+            Text(title, style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            Text(description, style: textTheme.bodyText2?.copyWith(color: AppColors.charcoal)),
+            Text(description, style: textTheme.bodyMedium?.copyWith(color: AppColors.charcoal)),
           ],
         ),
       ),
@@ -511,9 +511,9 @@ class AboutPage extends StatelessWidget {
               backgroundColor: AppColors.background,
             ),
             const SizedBox(height: 8),
-            Text(member['name'], style: textTheme.subtitle1?.copyWith(fontWeight: FontWeight.bold)),
+            Text(member['name'], style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),
-            Text(member['role'], style: textTheme.caption?.copyWith(color: AppColors.charcoal)),
+            Text(member['role'], style: textTheme.bodySmall?.copyWith(color: AppColors.charcoal)),
           ],
         ),
       ),
