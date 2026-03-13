@@ -1,394 +1,222 @@
+// Homepage matching Index.tsx structure with full widget implementations
 import 'package:flutter/material.dart';
-import '../data/dummydata.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:intercen_app/theme/app_colors.dart';
 
-class HomePage extends StatefulWidget {
+// ── PAGE ────────────────────────────────────────────────
+
+class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  Widget build(BuildContext context) {
+    return const SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Hero Section
+          _HeroSection(),
+          // Category Section
+          _CategorySection(),
+          // Promo Banner
+          _PromoBanner(),
+        ],
+      ),
+    );
+  }
 }
 
-class _HomePageState extends State<HomePage> {
+// ── HERO SECTION ────────────────────────────────────────
+
+class _HeroSection extends StatelessWidget {
+  const _HeroSection();
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF9F5EF),
-      bottomNavigationBar: _bottomNav(context),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-
-              // =========================
-              // TOP BAR
-              // =========================
-              Row(
-                children: [
-                  const CircleAvatar(
-                    radius: 18,
-                    backgroundImage:
-                        NetworkImage("https://i.pravatar.cc/150?img=12"),
-                  ),
-                  const Spacer(),
-                  Image.asset(
-                    "lib/assets/intercenlogo.png",
-                    height: 32,
-                  ),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.notifications_none, size: 20),
-                  ),
-                ],
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(gradient: AppColors.warmGradient),
+      child: Stack(
+        children: [
+          // Decorative blurred circles
+          Positioned(
+            top: 20,
+            left: 10,
+            child: Container(
+              width: 180,
+              height: 180,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.primary.withOpacity(0.06),
               ),
-
-              const SizedBox(height: 26),
-
-              // =========================
-              // HERO TEXT
-              // =========================
-              const Text(
-                "Looking for something inspiring?\nExplore our library!",
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w700,
-                  height: 1.35,
-                ),
+            ),
+          ),
+          Positioned(
+            bottom: 20,
+            right: 10,
+            child: Container(
+              width: 220,
+              height: 220,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.secondary.withOpacity(0.04),
               ),
+            ),
+          ),
 
-              const SizedBox(height: 26),
-
-              // =========================
-              // FEATURED BOOKS
-              // =========================
-              const Text(
-                "Featured Books",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-              ),
-
-              const SizedBox(height: 14),
-
-              SizedBox(
-                height: 240,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: trendingBooks.length,
-                  itemBuilder: (_, i) {
-                    return _featuredBookCard(trendingBooks[i]);
-                  },
-                ),
-              ),
-
-              const SizedBox(height: 32),
-
-              // =========================
-              // NEW RELEASES
-              // =========================
-              const Text(
-                "New Releases",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-              ),
-
-              const SizedBox(height: 14),
-
-              SizedBox(
-                height: 180,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: newReleases.length,
-                  itemBuilder: (_, i) {
-                    return _newReleaseCard(newReleases[i]);
-                  },
-                ),
-              ),
-
-              const SizedBox(height: 32),
-
-              // =========================
-              // CONTINUE READING
-              // =========================
-              if (dummyBooks.isNotEmpty)
+          // Main content
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                // Subtitle
                 Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      "Continue Reading",
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 14),
-                    _continueReadingCard(dummyBooks.first),
-                    const SizedBox(height: 32),
-                  ],
-                ),
-
-              // =========================
-              // KENYAN AUTHORS SPOTLIGHT (FIXED)
-              // =========================
-              const Text(
-                "Kenyan Authors Spotlight",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-              ),
-
-              const SizedBox(height: 14),
-
-              SizedBox(
-                height: 150,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  children: const [
-                    _AuthorCard(
-                      name: "Barak Wandera",
-                      imageUrl: "lib/assets/barak.png",
-                    ),
-                    _AuthorCard(
-                      name: "Egara Kabaji",
-                      imageUrl: "lib/assets/egara.jpeg",
-                    ),
-                    _AuthorCard(
-                      name: "Meja Mwangi",
-                      imageUrl: "lib/assets/egara.jpeg",
-                    ),
-                    _AuthorCard(
-                      name: "Margaret Ogola",
-                      imageUrl: "lib/assets/barak.png",
-                    ),
-                    _AuthorCard(
-                      name: "Binyavanga Wainaina",
-                      imageUrl: "lib/assets/barak.png",
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 32),
-
-              // =========================
-              // LOCAL LANGUAGES
-              // =========================
-              if (localLanguageBooks.isNotEmpty)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      "Popular in Kiswahili & Local Languages",
-                      style:
-                          TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      height: 200,
-                      child: ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: localLanguageBooks.length,
-                        itemBuilder: (_, i) {
-                          return _localLanguageCard(localLanguageBooks[i]);
-                        },
+                    Text(
+                      'PUBLISHING EXCELLENCE SINCE 2019',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 3.5,
+                        color: AppColors.primary,
                       ),
                     ),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: 60,
+                      height: 1,
+                      color: AppColors.primary,
+                    ),
                   ],
                 ),
 
-              const SizedBox(height: 110),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+                const SizedBox(height: 24),
 
-  // =========================
-  // FEATURED BOOK CARD
-  // =========================
-  Widget _featuredBookCard(DummyBook book) {
-    return GestureDetector(
-      onTap: () {
-        Navigator.pushNamed(context, '/book_detail', arguments: book.id);
-      },
-      child: Container(
-        width: 160,
-        margin: const EdgeInsets.only(right: 14),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(12)),
-              child: Image.asset(
-                book.image,
-                height: 160,
-                width: double.infinity,
-                fit: BoxFit.cover,
-              ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                // Headline
+                RichText(
+                  textAlign: TextAlign.center,
+                  text: const TextSpan(
+                    style: TextStyle(
+                      fontFamily: 'PlayfairDisplay',
+                      fontSize: 34,
+                      fontWeight: FontWeight.w400,
+                      height: 1.2,
+                      color: AppColors.foreground,
+                    ),
+                    children: [
+                      TextSpan(text: 'Your Partner in\n'),
+                      TextSpan(
+                        text: 'Publishing Success',
+                        style: TextStyle(color: AppColors.primary),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // Body text
+                const Text(
+                  'Intercen Books is a leading publisher and book marketplace in East Africa. We help authors bring their stories to life and connect readers with exceptional literature.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 15,
+                    height: 1.6,
+                    color: AppColors.mutedForeground,
+                  ),
+                ),
+
+                const SizedBox(height: 28),
+
+                // CTA Buttons
+                Column(
                   children: [
-                    Text(
-                      book.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 13),
+                    // Browse Books — filled red
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton.icon(
+                        onPressed: () =>
+                            Navigator.pushNamed(context, '/books'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: AppColors.primaryForeground,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          elevation: 0,
+                        ),
+                        icon: const SizedBox.shrink(),
+                        label: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Browse Books',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            SizedBox(width: 8),
+                            Icon(Icons.arrow_forward, size: 20),
+                          ],
+                        ),
+                      ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      book.author,
-                      style: const TextStyle(
-                          fontSize: 12, color: Colors.grey),
-                    ),
-                    const Spacer(),
-                    Text(
-                      'KES ${book.price.toStringAsFixed(0)}',
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFFB11226)),
+
+                    const SizedBox(height: 12),
+
+                    // Publish With Us — outlined
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: OutlinedButton(
+                        onPressed: () {},
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.primary,
+                          side: const BorderSide(
+                              color: AppColors.primary, width: 1.5),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'Publish With Us',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),
-              ),
+
+                const SizedBox(height: 32),
+
+                // Trust badges
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Fast Delivery
+                    _TrustBadge(
+                      icon: Icons.local_shipping_outlined,
+                      title: 'Fast Delivery',
+                      subtitle: 'Across East Africa',
+                    ),
+                    const SizedBox(width: 24),
+                    // 500+ Titles
+                    _TrustBadge(
+                      icon: Icons.menu_book_outlined,
+                      title: '500+ Titles',
+                      subtitle: 'Quality Publications',
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // =========================
-  // NEW RELEASE CARD
-  // =========================
-  Widget _newReleaseCard(DummyBook book) {
-    return GestureDetector(
-      onTap: () {
-        Navigator.pushNamed(context, '/book_detail', arguments: book.id);
-      },
-      child: Container(
-        width: 130,
-        margin: const EdgeInsets.only(right: 14),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: Colors.white,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(12)),
-              child: Image.asset(
-                book.image,
-                height: 110,
-                width: double.infinity,
-                fit: BoxFit.cover,
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Text(
-                book.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style:
-                    const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // =========================
-  // CONTINUE READING CARD
-  // =========================
-  Widget _continueReadingCard(DummyBook book) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        color: Colors.white,
-      ),
-      child: Row(
-        children: [
-          Image.asset(book.image, height: 90, width: 65, fit: BoxFit.cover),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Text(book.title,
-                maxLines: 2, overflow: TextOverflow.ellipsis),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // =========================
-  // LOCAL LANGUAGE CARD
-  // =========================
-  Widget _localLanguageCard(DummyBook book) {
-    return Container(
-      width: 140,
-      margin: const EdgeInsets.only(right: 14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        color: Colors.white,
-      ),
-      child: Column(
-        children: [
-          Image.asset(book.image,
-              height: 120, width: double.infinity, fit: BoxFit.cover),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Text(book.title,
-                maxLines: 2, overflow: TextOverflow.ellipsis),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // =========================
-  // BOTTOM NAVIGATION
-  // =========================
-  Widget _bottomNav(BuildContext context) {
-    return Container(
-      height: 68,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _NavItem(icon: Icons.home, label: "Home", active: true),
-          _NavItem(
-            icon: Icons.menu_book_outlined,
-            label: "Books",
-            onTap: () => Navigator.pushNamed(context, "/books"),
-          ),
-          _NavItem(
-            icon: Icons.shopping_cart_outlined,
-            label: "Cart",
-            onTap: () => Navigator.pushNamed(context, "/cart"),
           ),
         ],
       ),
@@ -396,77 +224,373 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-// =========================
-// AUTHOR CARD (ASSET-BASED)
-// =========================
-class _AuthorCard extends StatelessWidget {
-  final String name;
-  final String imageUrl;
+// ── TRUST BADGE ─────────────────────────────────────────
 
-  const _AuthorCard({required this.name, required this.imageUrl});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 100,
-      margin: const EdgeInsets.only(right: 14),
-      child: Column(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: Image.asset(
-              imageUrl,
-              height: 90,
-              width: 90,
-              fit: BoxFit.cover,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            name,
-            maxLines: 2,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 12),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// =========================
-// NAV ITEM
-// =========================
-class _NavItem extends StatelessWidget {
+class _TrustBadge extends StatelessWidget {
   final IconData icon;
-  final String label;
-  final bool active;
-  final VoidCallback? onTap;
+  final String title;
+  final String subtitle;
 
-  const _NavItem({
+  const _TrustBadge({
     required this.icon,
-    required this.label,
-    this.active = false,
-    this.onTap,
+    required this.title,
+    required this.subtitle,
   });
 
   @override
   Widget build(BuildContext context) {
-    final color = active ? const Color(0xFFB11226) : Colors.grey;
+    return Row(
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: AppColors.accent.withOpacity(0.15),
+          ),
+          child: Icon(icon, size: 20, color: AppColors.primary),
+        ),
+        const SizedBox(width: 8),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.foreground,
+              ),
+            ),
+            Text(
+              subtitle,
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppColors.mutedForeground,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
 
-    return GestureDetector(
-      onTap: onTap,
+// ── CATEGORY SECTION ────────────────────────────────────
+
+class _CategorySection extends StatelessWidget {
+  const _CategorySection();
+
+  static const _categories = [
+    _Category('Fiction', 'fiction',
+        'https://images.unsplash.com/photo-1481627834876-b7833e8f5570?w=400&h=300&fit=crop'),
+    _Category('Non-Fiction', 'non-fiction',
+        'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=300&fit=crop'),
+    _Category('Mystery & Thriller', 'mystery-thriller',
+        'https://images.unsplash.com/photo-1509021436665-8f07dbf5bf1d?w=400&h=300&fit=crop'),
+    _Category('Romance', 'romance',
+        'https://images.unsplash.com/photo-1518199266791-5375a83190b7?w=400&h=300&fit=crop'),
+    _Category('Science Fiction', 'science-fiction',
+        'https://images.unsplash.com/photo-1446776653964-20c1d3a81b06?w=400&h=300&fit=crop'),
+    _Category('Biography', 'biography',
+        'https://images.unsplash.com/photo-1516979187457-637abb4f9353?w=400&h=300&fit=crop'),
+    _Category('Self-Help', 'self-help',
+        'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?w=400&h=300&fit=crop'),
+    _Category("Children's Books", 'childrens',
+        'https://images.unsplash.com/photo-1629992101753-56d196c8aabb?w=400&h=300&fit=crop'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: AppColors.muted.withOpacity(0.3),
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 16),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, color: color),
-          Text(label,
-              style: TextStyle(
-                  fontSize: 12,
-                  color: color,
-                  fontWeight:
-                      active ? FontWeight.w600 : FontWeight.normal)),
+          // Header
+          Column(
+            children: [
+              Text(
+                'CATEGORIES',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 3.5,
+                  color: AppColors.primary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(width: 60, height: 1, color: AppColors.primary),
+              const SizedBox(height: 16),
+              const Text(
+                'Browse by Category',
+                style: TextStyle(
+                  fontFamily: 'PlayfairDisplay',
+                  fontSize: 28,
+                  fontWeight: FontWeight.w400,
+                  color: AppColors.foreground,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Explore our curated collection across diverse genres',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 15,
+                  color: AppColors.mutedForeground,
+                  height: 1.5,
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 24),
+
+          // Category Grid — 2 columns
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _categories.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 4 / 3,
+            ),
+            itemBuilder: (context, index) {
+              final cat = _categories[index];
+              return _CategoryCard(category: cat);
+            },
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _Category {
+  final String name;
+  final String slug;
+  final String imageUrl;
+  const _Category(this.name, this.slug, this.imageUrl);
+}
+
+class _CategoryCard extends StatelessWidget {
+  final _Category category;
+  const _CategoryCard({required this.category});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () =>
+          Navigator.pushNamed(context, '/books', arguments: category.slug),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Background image
+            CachedNetworkImage(
+              imageUrl: category.imageUrl,
+              fit: BoxFit.cover,
+              placeholder: (_, __) => Container(
+                color: AppColors.muted,
+                child: const Center(
+                  child: SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ),
+              ),
+              errorWidget: (_, __, ___) => Container(
+                color: AppColors.muted,
+                child:
+                    const Icon(Icons.image, size: 32, color: AppColors.mutedForeground),
+              ),
+            ),
+
+            // Dark gradient overlay
+            Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Color(0x66262626),
+                    Color(0xE6262626),
+                  ],
+                  stops: [0.0, 0.5, 1.0],
+                ),
+              ),
+            ),
+
+            // Text
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 12,
+              child: Text(
+                category.name,
+                style: const TextStyle(
+                  fontFamily: 'PlayfairDisplay',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── PROMO BANNER ────────────────────────────────────────
+
+class _PromoBanner extends StatelessWidget {
+  const _PromoBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          width: double.infinity,
+          decoration: const BoxDecoration(
+            gradient: AppColors.promoBannerGradient,
+          ),
+          child: Stack(
+            children: [
+              // Decorative circles
+              Positioned(
+                top: -60,
+                right: -60,
+                child: Container(
+                  width: 200,
+                  height: 200,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.1),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: -40,
+                left: -40,
+                child: Container(
+                  width: 140,
+                  height: 140,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.1),
+                  ),
+                ),
+              ),
+
+              // Content
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Limited Time Offer pill
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(50),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.percent, size: 14, color: Colors.white),
+                          SizedBox(width: 6),
+                          Text(
+                            'Limited Time Offer',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // Headline
+                    const Text(
+                      'Up to 40% Off\nSelected Books',
+                      style: TextStyle(
+                        fontFamily: 'PlayfairDisplay',
+                        fontSize: 30,
+                        fontWeight: FontWeight.w400,
+                        height: 1.2,
+                        color: Colors.white,
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // Body
+                    Text(
+                      "Don't miss out on our biggest sale of the year. Discover amazing deals on bestsellers and new releases.",
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.5,
+                        color: Colors.white.withOpacity(0.8),
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    // Shop the Sale button — gold
+                    SizedBox(
+                      height: 48,
+                      child: ElevatedButton.icon(
+                        onPressed: () =>
+                            Navigator.pushNamed(context, '/books'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.gold,
+                          foregroundColor: AppColors.foreground,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          elevation: 0,
+                        ),
+                        icon: const SizedBox.shrink(),
+                        label: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Shop the Sale',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            SizedBox(width: 8),
+                            Icon(Icons.arrow_forward, size: 18),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

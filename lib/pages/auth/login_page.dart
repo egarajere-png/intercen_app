@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'auth_widgets.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -9,199 +11,214 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  bool keepLoggedIn = false; // controls checkbox
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+
+  bool keepLoggedIn = false;
+  bool isLoading = false;
+  bool showPassword = false;
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> handleLogin() async {
+    final email = emailController.text.trim();
+    final password = passwordController.text.trim();
+
+    if (email.isEmpty || password.isEmpty) {
+      _showSnack('Please fill in all fields');
+      return;
+    }
+
+    setState(() => isLoading = true);
+
+    try {
+      final response = await Supabase.instance.client.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
+
+      if (response.user != null && mounted) {
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          '/home',
+          (route) => false,
+        );
+      }
+    } on AuthException catch (e) {
+      _showSnack(e.message);
+    } catch (_) {
+      _showSnack('Something went wrong. Please try again.');
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: const Color(0xFF2D2D2D),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF9F5EF),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFFF9F5EF),
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 20),
-
-            /// Title
-            const Text(
-              'Login account',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Welcome back!',
-              style: TextStyle(color: Colors.grey),
-            ),
-
-            const SizedBox(height: 32),
-
-            /// Email
-            const Text('Email'),
-            const SizedBox(height: 8),
-            TextField(
-              
-              decoration: InputDecoration(
-                hintText: 'example@gmail.com',
-                prefixIcon: const Icon(Icons.email_outlined),
-                border: OutlineInputBorder(
-                  // color: const Color(0xFFB11226),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            /// Password
-            const Text('Password'),
-            const SizedBox(height: 8),
-            TextField(
-              obscureText: true,
-              decoration: InputDecoration(
-                hintText: 'Enter password',
-                prefixIcon: const Icon(Icons.lock_outline),
-                suffixIcon: const Icon(Icons.visibility_off_outlined),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            /// Keep logged in + Forgot password
-            Row(
-              children: [
-                Checkbox(
-                  value: keepLoggedIn,
-                  activeColor: const Color(0xFFB11226),
-                  onChanged: (value) {
-                    setState(() {
-                      keepLoggedIn = value!;
-                    });
-                  },
-                ),
-                const Text('Keep me logged in'),
-                const Spacer(),
-                TextButton(
-                  style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFFB11226),
-                  ),
-                  onPressed: () {},
-                  child: const Text('Forgot password?'),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 20),
-
-            /// Login button (RED)
-            SizedBox(
-              width: double.infinity,
-              height: 54,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFB11226),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                ),
-                onPressed: () => Navigator.pushNamed(context, '/home'),
-                child: const Text(
-                  'Login',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 24),
-
-            /// Divider
-            Row(
-              children: const [
-                Expanded(child: Divider()),
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8),
-                  child: Text('Or sign up with'),
-                ),
-                Expanded(child: Divider()),
-              ],
-            ),
-
-            const SizedBox(height: 20),
-
-            /// Social buttons
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {},
-                    icon: const FaIcon(FontAwesomeIcons.google),
-                    label: const Text('Google'),
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: const Color(0xFFB11226),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {},
-                    icon: const FaIcon(FontAwesomeIcons.apple),
-                    label: const Text('Apple'),
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: const Color(0xFFB11226),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                      
-                    ),
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 24),
-
-            /// Bottom text (RED Sign Up)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text("Don’t have an account? "),
-                GestureDetector(
-                  onTap: () => Navigator.pushNamed(context, '/signup'),
-                  child: const Text(
-                    'Sign up',
+      body: Column(
+        children: [
+          buildDarkHeader(
+            title: 'Welcome to\nInterCEN Books',
+            subtitle:
+                'Sign in to access your orders, wishlist,\nand exclusive member benefits.',
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Welcome back',
                     style: TextStyle(
+                      fontSize: 28,
                       fontWeight: FontWeight.bold,
-                      color: Color(0xFFB11226),
+                      fontFamily: 'PlayfairDisplay',
+                      color: Color(0xFF1A1A1A),
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Sign in to your InterCEN Books account',
+                    style: TextStyle(color: Color(0xFF888888), fontSize: 14),
+                  ),
+                  const SizedBox(height: 32),
+
+                  buildLabel('Email'),
+                  const SizedBox(height: 8),
+                  buildTextField(
+                    controller: emailController,
+                    hint: 'you@example.com',
+                    icon: Icons.email_outlined,
+                    keyboardType: TextInputType.emailAddress,
+                  ),
+                  const SizedBox(height: 20),
+
+                  buildLabel('Password'),
+                  const SizedBox(height: 8),
+                  buildPasswordField(
+                    controller: passwordController,
+                    hint: 'Enter password',
+                    show: showPassword,
+                    onToggle: () =>
+                        setState(() => showPassword = !showPassword),
+                  ),
+                  const SizedBox(height: 12),
+
+                  Row(
+                    children: [
+                      Transform.scale(
+                        scale: 0.9,
+                        child: Checkbox(
+                          value: keepLoggedIn,
+                          activeColor: const Color(0xFFB11226),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(4)),
+                          onChanged: (v) =>
+                              setState(() => keepLoggedIn = v!),
+                        ),
+                      ),
+                      const Text(
+                        'Keep me logged in',
+                        style: TextStyle(
+                            fontSize: 13, color: Color(0xFF555555)),
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFFB11226),
+                          padding: EdgeInsets.zero,
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: () => Navigator.pushNamed(
+                            context, '/reset-password'),
+                        child: const Text('Forgot password?',
+                            style: TextStyle(fontSize: 13)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+
+                  buildPrimaryButton(
+                    label: 'Sign In',
+                    isLoading: isLoading,
+                    onPressed: handleLogin,
+                  ),
+                  const SizedBox(height: 28),
+
+                  buildDivider('Or continue with'),
+                  const SizedBox(height: 20),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: buildSocialButton(
+                          icon: FontAwesomeIcons.google,
+                          label: 'Google',
+                          onPressed: () =>
+                              _showSnack('Google Sign-In coming soon!'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: buildSocialButton(
+                          icon: FontAwesomeIcons.apple,
+                          label: 'Apple',
+                          onPressed: () =>
+                              _showSnack('Apple Sign-In coming soon!'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 32),
+
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text("Don't have an account? ",
+                          style: TextStyle(
+                              color: Color(0xFF666666), fontSize: 14)),
+                      GestureDetector(
+                        onTap: () =>
+                            Navigator.pushNamed(context, '/signup'),
+                        child: const Text(
+                          'Sign up',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFFB11226),
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
