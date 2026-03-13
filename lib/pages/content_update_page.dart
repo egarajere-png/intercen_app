@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 
 class ContentUpdatePage extends StatelessWidget {
-  const ContentUpdatePage({Key? key}) : super(key: key);
+  const ContentUpdatePage({super.key});
 
   @override
   Widget build(BuildContext context) {

@@ -7,22 +7,28 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:app_links/app_links.dart';
 
-// ── Your existing pages ───────────────────────────────────────────────────────
+// ── Core pages ────────────────────────────────────────────────────────────────
 import 'pages/homepage.dart';
 import 'pages/books.dart';
 import 'pages/book_detail_page.dart';
 import 'pages/splashscreen.dart';
 import 'pages/cart.dart';
 import 'pages/checkout_page.dart';
-import 'pages/settingsPage.dart';
-import 'pages/profile_page.dart';
 
-// Auth pages
+// ── Auth pages ────────────────────────────────────────────────────────────────
 import 'pages/auth/login_page.dart';
 import 'pages/auth/signup_page.dart';
 import 'pages/auth/reset_passwordpage.dart';
 import 'pages/auth/otp_page.dart';
 import 'pages/auth/confirm_passpage.dart';
+
+// ── Feature pages ─────────────────────────────────────────────────────────────
+import 'pages/profile_page.dart';
+import 'pages/profile_setup_page.dart';
+import 'pages/settingsPage.dart';
+import 'pages/content_management_page.dart';
+import 'pages/content_reader_page.dart';
+import 'pages/publish_with_us_page.dart';
 
 import 'theme/app_colors.dart';
 
@@ -39,11 +45,10 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 // Two paths:
 //   1. Cold start  – app was not running when Paystack redirected.
 //                    getInitialLink() returns the URI on first frame.
-//   2. Warm/hot    – app was in background or foreground.
+//   2. Warm / hot  – app was in background or foreground.
 //                    uriLinkStream delivers the URI.
 //
-// Both paths go straight to /payment-success, clearing the back-stack.
-// There is no intermediate /payment-callback route needed.
+// Both paths navigate straight to /payment-success, clearing the back-stack.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class DeepLinkService {
@@ -95,8 +100,6 @@ class DeepLinkService {
 
   // ── Payment callback ──────────────────────────────────────────────────────
   // intercen://payment-callback?order_id=xxx&order_number=yyy
-  // (Paystack may also append &reference=zzz – we ignore it here because
-  //  the webhook already updated the DB by the time this fires.)
 
   static void _handlePaymentCallback(Uri uri) {
     final orderId     = uri.queryParameters['order_id']     ?? '';
@@ -109,8 +112,6 @@ class DeepLinkService {
       return;
     }
 
-    // Navigate to success, clear entire back-stack so the user cannot
-    // go back to the checkout or payment page.
     navigatorKey.currentState?.pushNamedAndRemoveUntil(
       '/payment-success',
       (_) => false,
@@ -184,6 +185,8 @@ class _IntercenAppState extends State<IntercenApp> {
         textTheme: ThemeData.light().textTheme.apply(
             bodyColor: Colors.black, displayColor: Colors.black),
       ),
+
+      // ── Home: auth-state driven entry point ────────────────────────────────
       home: StreamBuilder<AuthState>(
         stream: Supabase.instance.client.auth.onAuthStateChange,
         builder: (context, snapshot) {
@@ -191,19 +194,25 @@ class _IntercenAppState extends State<IntercenApp> {
           return session != null ? const Shell() : const OnboardingPage();
         },
       ),
+
+      // ── Static named routes ────────────────────────────────────────────────
       routes: {
+        // ── Auth ─────────────────────────────────────────────────────────────
         '/onboarding':       (_) => const OnboardingPage(),
         '/login':            (_) => const LoginPage(),
         '/signup':           (_) => const SignUpPage(),
         '/reset-password':   (_) => const ResetPasswordPage(),
         '/otp':              (_) => const OtpPage(),
         '/confirm-password': (_) => const ConfirmPasswordPage(),
-        '/home':             (_) => const AuthGuard(child: Shell()),
-        '/books':            (_) => const AuthGuard(child: BooksPage()),
-        '/book-detail':      (_) => const AuthGuard(child: BookDetailPage()),
-        '/cart':             (_) => const AuthGuard(child: CartPage()),
-        '/checkout':         (_) => AuthGuard(child: CheckoutFlowPage()),
 
+        // ── Core shell ────────────────────────────────────────────────────────
+        '/home':        (_) => const AuthGuard(child: Shell()),
+        '/books':       (_) => const AuthGuard(child: BooksPage()),
+        '/book-detail': (_) => const AuthGuard(child: BookDetailPage()),
+        '/cart':        (_) => const AuthGuard(child: CartPage()),
+        '/checkout':    (_) => AuthGuard(child: CheckoutFlowPage()),
+
+        // ── Checkout / payment ────────────────────────────────────────────────
         '/checkout/payment': (ctx) {
           final args = ModalRoute.of(ctx)?.settings.arguments;
           String orderId = '';
@@ -215,11 +224,11 @@ class _IntercenAppState extends State<IntercenApp> {
           return AuthGuard(child: CheckoutPaymentPage(orderId: orderId));
         },
 
-        // ── Paystack browser launcher + DB polling ───────────────────────────
+        // ── Paystack browser launcher + DB polling ────────────────────────────
         '/paystack-webview': (ctx) {
           final args =
-              ModalRoute.of(ctx)?.settings.arguments as Map<String, dynamic>? ??
-                  {};
+              ModalRoute.of(ctx)?.settings.arguments as Map<String, dynamic>?
+              ?? {};
           return PaystackLaunchPage(
             url:         args['url']          as String? ?? '',
             orderId:     args['order_id']     as String? ?? '',
@@ -227,29 +236,133 @@ class _IntercenAppState extends State<IntercenApp> {
           );
         },
 
-        // ── Success ──────────────────────────────────────────────────────────
+        // ── Payment results ───────────────────────────────────────────────────
         '/payment-success': (ctx) {
           final args =
-              ModalRoute.of(ctx)?.settings.arguments as Map<String, dynamic>? ??
-                  {};
+              ModalRoute.of(ctx)?.settings.arguments as Map<String, dynamic>?
+              ?? {};
           return PaymentSuccessPage(
             orderId:     args['order_id']     as String? ?? '',
             orderNumber: args['order_number'] as String? ?? '',
           );
         },
-
-        // ── Failure ──────────────────────────────────────────────────────────
         '/payment-failure': (ctx) {
           final args =
-              ModalRoute.of(ctx)?.settings.arguments as Map<String, dynamic>? ??
-                  {};
+              ModalRoute.of(ctx)?.settings.arguments as Map<String, dynamic>?
+              ?? {};
           return PaymentFailurePage(
             orderId:     args['order_id']     as String? ?? '',
             orderNumber: args['order_number'] as String? ?? '',
           );
         },
-        '/settings': (_) => const AuthGuard(child: SettingsPage()),
-        '/profile': (_) => const AuthGuard(child: ProfilePage()),
+
+        // ── Profile ───────────────────────────────────────────────────────────
+        '/profile':       (_) => const AuthGuard(child: ProfilePage()),
+        '/profile-setup': (_) => const AuthGuard(child: ProfileSetupPage()),
+        '/settings':      (_) => const AuthGuard(child: SettingsPage()),
+
+        // ── Publishing ────────────────────────────────────────────────────────
+        // /publish is intentionally public — it's a marketing page shown
+        // to unauthenticated users (e.g. from the onboarding screen).
+        '/publish':            (_) => const PublishWithUsPage(),
+        '/content-management': (_) =>
+            const AuthGuard(child: ContentManagementPage()),
+      },
+
+      // ── Dynamic route generation ───────────────────────────────────────────
+      //
+      // Handles path segments that carry a UUID / ID in the URL:
+      //
+      //   /content/<uuid>       → ContentReaderPage   (purchase-gated)
+      //   /content-view/<uuid>  → ContentReaderPage   (alias used by profile)
+      //   /book-detail/<uuid>   → BookDetailPage      (deep-link alias)
+      //
+      // Any genuinely unknown route falls through to a friendly 404 page
+      // instead of a black screen or an unhandled exception.
+      // ───────────────────────────────────────────────────────────────────────
+      onGenerateRoute: (settings) {
+        final name = settings.name ?? '';
+
+        // ── /content/<id>  or  /content-view/<id> ────────────────────────────
+        final contentMatch =
+            RegExp(r'^/content(?:-view)?/(.+)$').firstMatch(name);
+        if (contentMatch != null) {
+          final contentId = contentMatch.group(1) ?? '';
+          return MaterialPageRoute(
+            settings: settings,
+            builder: (_) =>
+                AuthGuard(child: ContentReaderPage(contentId: contentId)),
+          );
+        }
+
+        // ── /book-detail/<id>  (deep-link convenience alias) ─────────────────
+        final bookMatch = RegExp(r'^/book-detail/(.+)$').firstMatch(name);
+        if (bookMatch != null) {
+          final bookId = bookMatch.group(1) ?? '';
+          return MaterialPageRoute(
+            settings: RouteSettings(name: name, arguments: bookId),
+            builder: (_) => const AuthGuard(child: BookDetailPage()),
+          );
+        }
+
+        // ── 404 — unknown route ───────────────────────────────────────────────
+        return MaterialPageRoute(
+          builder: (_) => Scaffold(
+            backgroundColor: const Color(0xFFF9F5EF),
+            appBar: AppBar(
+              backgroundColor: Colors.white,
+              elevation: 0,
+              surfaceTintColor: Colors.transparent,
+              leading: Builder(
+                builder: (ctx) => IconButton(
+                  icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                      size: 20, color: Color(0xFF1A1A2E)),
+                  onPressed: () => Navigator.pop(ctx),
+                ),
+              ),
+            ),
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(40),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.explore_off_rounded,
+                        size: 64, color: Color(0xFFD1D5DB)),
+                    const SizedBox(height: 16),
+                    const Text('Page Not Found',
+                        style: TextStyle(
+                            fontFamily: 'PlayfairDisplay',
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF111827))),
+                    const SizedBox(height: 8),
+                    Text(name,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            fontFamily: 'DM Sans',
+                            fontSize: 12,
+                            color: Color(0xFF9CA3AF))),
+                    const SizedBox(height: 28),
+                    Builder(
+                      builder: (ctx) => ElevatedButton(
+                        onPressed: () => Navigator.pushNamedAndRemoveUntil(
+                            ctx, '/home', (_) => false),
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12))),
+                        child: const Text('Go to Home',
+                            style: TextStyle(fontFamily: 'DM Sans')),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
       },
     );
   }
@@ -257,6 +370,8 @@ class _IntercenAppState extends State<IntercenApp> {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTH GUARD
+// Redirects to /onboarding if no valid session is present.
+// Shows a loading spinner during the post-frame redirect to avoid flicker.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AuthGuard extends StatelessWidget {
@@ -267,8 +382,9 @@ class AuthGuard extends StatelessWidget {
   Widget build(BuildContext context) {
     final session = Supabase.instance.client.auth.currentSession;
     if (session == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => Navigator.of(context)
-          .pushNamedAndRemoveUntil('/onboarding', (_) => false));
+      WidgetsBinding.instance.addPostFrameCallback((_) =>
+          Navigator.of(context)
+              .pushNamedAndRemoveUntil('/onboarding', (_) => false));
       return const Scaffold(
           body: Center(child: CircularProgressIndicator()));
     }
@@ -277,7 +393,7 @@ class AuthGuard extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SHELL
+// SHELL — main bottom-nav scaffold
 // ─────────────────────────────────────────────────────────────────────────────
 
 class Shell extends StatefulWidget {
@@ -298,12 +414,10 @@ class _ShellState extends State<Shell> {
 // ═════════════════════════════════════════════════════════════════════════════
 // PAYSTACK LAUNCH PAGE
 //
-// Responsibilities:
-//   1. Opens the Paystack authorization URL in the external browser.
-//   2. Polls Supabase every 4 s for payment_status == 'paid'.
-//   3. Also triggers an immediate check when the app resumes from background
-//      (covers the case where the deep link fired but the stream was slow).
-//   4. Times out after 3 minutes and shows a helpful fallback — not 10 min.
+// 1. Opens the Paystack authorization URL in the external browser.
+// 2. Polls Supabase every 4 s for payment_status == 'paid'.
+// 3. Also triggers an immediate check when the app resumes from background.
+// 4. Times out after 3 minutes and shows a helpful fallback.
 //
 // The deep link (intercen://payment-callback) is handled globally by
 // DeepLinkService and navigates directly to /payment-success, so this page
@@ -330,10 +444,10 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
   Timer? _pollTimer;
   Timer? _pollTimeout;
 
-  bool _launched   = false;
-  bool _polling    = false;
-  bool _timedOut   = false;
-  bool _confirmed  = false;
+  bool _launched  = false;
+  bool _polling   = false;
+  bool _timedOut  = false;
+  bool _confirmed = false;
 
   @override
   void initState() {
@@ -349,9 +463,6 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
     super.dispose();
   }
 
-  // Check immediately every time the app comes back to the foreground.
-  // This fires after the user taps "Return to app" in the browser, which
-  // is often faster than the next 4-second poll tick.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _polling && !_confirmed) {
@@ -375,12 +486,7 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
   void _startPoll() {
     _stopPoll();
     debugPrint('[PaystackLaunch] Starting poll for order ${widget.orderId}');
-
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) => _checkNow());
-
-    // 3-minute timeout – much more reasonable than 10 minutes.
-    // After timeout, prompt the user to check their orders rather than
-    // leaving them on a spinning screen indefinitely.
     _pollTimeout = Timer(const Duration(minutes: 3), () {
       _stopPoll();
       if (mounted) setState(() { _timedOut = true; _polling = false; });
@@ -468,8 +574,7 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 90,
-              height: 90,
+              width: 90, height: 90,
               decoration: const BoxDecoration(
                   color: Color(0xFFEFF6FF), shape: BoxShape.circle),
               child: const Icon(Icons.open_in_browser_rounded,
@@ -489,9 +594,7 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
                 'This screen will automatically update once your payment is confirmed.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF6B7280),
-                    height: 1.65),
+                    fontSize: 14, color: Color(0xFF6B7280), height: 1.65),
               ),
               const SizedBox(height: 32),
 
@@ -505,8 +608,7 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
                       borderRadius: BorderRadius.circular(12)),
                   child: const Row(mainAxisSize: MainAxisSize.min, children: [
                     SizedBox(
-                      width: 16,
-                      height: 16,
+                      width: 16, height: 16,
                       child: CircularProgressIndicator(
                           strokeWidth: 2,
                           valueColor:
@@ -558,9 +660,7 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
                 "If you completed the payment it may still be processing.",
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF6B7280),
-                    height: 1.65),
+                    fontSize: 14, color: Color(0xFF6B7280), height: 1.65),
               ),
               const SizedBox(height: 32),
 
@@ -586,7 +686,6 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
               ),
               const SizedBox(height: 12),
 
-              // Let them check their orders if they believe payment went through
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
@@ -644,8 +743,7 @@ class PaymentSuccessPage extends StatelessWidget {
                 builder: (_, v, child) =>
                     Transform.scale(scale: v, child: child),
                 child: Container(
-                  width: 110,
-                  height: 110,
+                  width: 110, height: 110,
                   decoration: const BoxDecoration(
                       color: Color(0xFFF0FDF4), shape: BoxShape.circle),
                   child: const Icon(Icons.check_circle_rounded,
@@ -697,8 +795,7 @@ class PaymentSuccessPage extends StatelessWidget {
               const SizedBox(height: 32),
 
               SizedBox(
-                width: double.infinity,
-                height: 52,
+                width: double.infinity, height: 52,
                 child: ElevatedButton.icon(
                   onPressed: () => Navigator.pushNamedAndRemoveUntil(
                       context, '/books', (_) => false),
@@ -740,8 +837,8 @@ class _DetailRow extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label,
-              style:
-                  const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+              style: const TextStyle(
+                  fontSize: 13, color: Color(0xFF6B7280))),
           Text(value,
               style: TextStyle(
                   fontSize: 13,
@@ -777,8 +874,7 @@ class PaymentFailurePage extends StatelessWidget {
                 builder: (_, v, child) =>
                     Transform.scale(scale: v, child: child),
                 child: Container(
-                  width: 110,
-                  height: 110,
+                  width: 110, height: 110,
                   decoration: BoxDecoration(
                       color: AppColors.primary.withOpacity(0.1),
                       shape: BoxShape.circle),
@@ -830,8 +926,7 @@ class PaymentFailurePage extends StatelessWidget {
               const SizedBox(height: 32),
 
               SizedBox(
-                width: double.infinity,
-                height: 52,
+                width: double.infinity, height: 52,
                 child: ElevatedButton.icon(
                   onPressed: () => Navigator.pushNamedAndRemoveUntil(
                       context, '/checkout/payment', (_) => false,
@@ -871,7 +966,7 @@ class PaymentFailurePage extends StatelessWidget {
 
 class _CpOrderItem {
   final String id, contentId, title, author;
-  final int quantity;
+  final int    quantity;
   final double unitPrice, totalPrice;
   final String? coverImageUrl;
 
@@ -889,21 +984,21 @@ class _CpOrderItem {
   factory _CpOrderItem.fromJson(Map<String, dynamic> j) {
     final c = (j['content'] as Map<String, dynamic>?) ?? {};
     return _CpOrderItem(
-      id:            j['id']           as String? ?? '',
-      contentId:     j['content_id']   as String? ?? '',
-      quantity:      (j['quantity']    as num?)?.toInt()    ?? 1,
-      unitPrice:     (j['unit_price']  as num?)?.toDouble() ?? 0,
-      totalPrice:    (j['total_price'] as num?)?.toDouble() ?? 0,
-      title:         c['title']        as String? ?? 'Unknown',
-      author:        c['author']       as String? ?? '',
+      id:            j['id']              as String? ?? '',
+      contentId:     j['content_id']      as String? ?? '',
+      quantity:      (j['quantity']       as num?)?.toInt()    ?? 1,
+      unitPrice:     (j['unit_price']     as num?)?.toDouble() ?? 0,
+      totalPrice:    (j['total_price']    as num?)?.toDouble() ?? 0,
+      title:         c['title']           as String? ?? 'Unknown',
+      author:        c['author']          as String? ?? '',
       coverImageUrl: c['cover_image_url'] as String?,
     );
   }
 }
 
 class _CpOrder {
-  final String id, orderNumber, status, paymentStatus, shippingAddress,
-      createdAt;
+  final String id, orderNumber, status, paymentStatus,
+      shippingAddress, createdAt;
   final double totalPrice, subTotal, tax, shipping, discount;
   final List<_CpOrderItem> items;
 
@@ -1016,8 +1111,6 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
   }
 
   // ── Paystack ─────────────────────────────────────────────────────────────
-  // Passes platform='mobile' so the edge function uses the deep-link
-  // callback URL (intercen://payment-callback) instead of the web URL.
 
   Future<void> _payPaystack() async {
     if (_order == null) return;
@@ -1091,8 +1184,6 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
 
   void _startPoll() {
     _stopPoll();
-    debugPrint('[CheckoutPayment] Starting poll for ${widget.orderId}');
-
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) async {
       try {
         final d = await _sb
@@ -1100,8 +1191,6 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
             .select('payment_status, order_number')
             .eq('id', widget.orderId)
             .single();
-
-        debugPrint('[CheckoutPayment] Poll: ${d['payment_status']}');
 
         if (d['payment_status'] == 'paid') {
           _stopPoll();
@@ -1254,8 +1343,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: SizedBox(
-              width: 54,
-              height: 74,
+              width: 54, height: 74,
               child: CachedNetworkImage(
                 imageUrl: item.coverImageUrl ?? '',
                 fit: BoxFit.cover,
@@ -1391,8 +1479,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
                       fontSize: 14, color: Color(0xFF111827)),
                   decoration: InputDecoration(
                     hintText: '7XXXXXXXX',
-                    hintStyle:
-                        const TextStyle(color: Color(0xFF9CA3AF)),
+                    hintStyle: const TextStyle(color: Color(0xFF9CA3AF)),
                     contentPadding: const EdgeInsets.symmetric(
                         horizontal: 14, vertical: 14),
                     filled: true,
@@ -1400,13 +1487,11 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
                     border: const OutlineInputBorder(
                         borderRadius: BorderRadius.horizontal(
                             right: Radius.circular(10)),
-                        borderSide:
-                            BorderSide(color: Color(0xFFD1D5DB))),
+                        borderSide: BorderSide(color: Color(0xFFD1D5DB))),
                     enabledBorder: const OutlineInputBorder(
                         borderRadius: BorderRadius.horizontal(
                             right: Radius.circular(10)),
-                        borderSide:
-                            BorderSide(color: Color(0xFFD1D5DB))),
+                        borderSide: BorderSide(color: Color(0xFFD1D5DB))),
                     focusedBorder: const OutlineInputBorder(
                         borderRadius: BorderRadius.horizontal(
                             right: Radius.circular(10)),
@@ -1419,8 +1504,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
             const SizedBox(height: 6),
             const Text(
                 'Enter the number registered on your M-Pesa account.',
-                style:
-                    TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+                style: TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
           ],
 
           // ── STK sent ───────────────────────────────────────────────────────
@@ -1437,12 +1521,11 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
                   'for the M-Pesa prompt and enter your PIN.',
               footer: const Row(children: [
                 SizedBox(
-                  width: 14,
-                  height: 14,
+                  width: 14, height: 14,
                   child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(
-                          Color(0xFF16A34A))),
+                      valueColor:
+                          AlwaysStoppedAnimation(Color(0xFF16A34A))),
                 ),
                 SizedBox(width: 8),
                 Text('Waiting for confirmation…',
@@ -1492,8 +1575,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
           _SR('Discount', '-KES ${_f(o.discount)}',
               c: const Color(0xFF16A34A)),
         if (o.tax > 0) _SR('Tax', 'KES ${_f(o.tax)}'),
-        _SR('Shipping',
-            o.shipping == 0 ? 'FREE' : 'KES ${_f(o.shipping)}'),
+        _SR('Shipping', o.shipping == 0 ? 'FREE' : 'KES ${_f(o.shipping)}'),
         const Padding(
             padding: EdgeInsets.symmetric(vertical: 12),
             child: Divider(height: 1)),
@@ -1521,8 +1603,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
 
     final isP = _method == _PMethod.paystack;
     final isM = _method == _PMethod.mpesa;
-    final ok  =
-        (isP || (isM && _phoneCtrl.text.length >= 9)) && !_processing;
+    final ok  = (isP || (isM && _phoneCtrl.text.length >= 9)) && !_processing;
     final col = isM
         ? const Color(0xFF16A34A)
         : isP
@@ -1539,27 +1620,22 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
           const SizedBox(height: 10),
         ],
         SizedBox(
-          width: double.infinity,
-          height: 52,
+          width: double.infinity, height: 52,
           child: ElevatedButton(
             onPressed: ok ? _handlePay : null,
             style: ElevatedButton.styleFrom(
-                backgroundColor:
-                    ok ? col : const Color(0xFFE5E7EB),
-                foregroundColor:
-                    ok ? Colors.white : const Color(0xFF9CA3AF),
-                elevation: ok ? 2 : 0,
-                shadowColor: col.withOpacity(0.35),
+                backgroundColor:   ok ? col : const Color(0xFFE5E7EB),
+                foregroundColor:   ok ? Colors.white : const Color(0xFF9CA3AF),
+                elevation:         ok ? 2 : 0,
+                shadowColor:       col.withOpacity(0.35),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14))),
             child: _processing
                 ? const SizedBox(
-                    width: 22,
-                    height: 22,
+                    width: 22, height: 22,
                     child: CircularProgressIndicator(
                         strokeWidth: 2.5,
-                        valueColor:
-                            AlwaysStoppedAnimation(Colors.white)))
+                        valueColor: AlwaysStoppedAnimation(Colors.white)))
                 : Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -1579,8 +1655,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
                                 ? 'Pay with M-Pesa'
                                 : 'Pay with Paystack',
                         style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700),
+                            fontSize: 16, fontWeight: FontWeight.w700),
                       ),
                     ],
                   ),
@@ -1636,8 +1711,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
           backgroundColor: Colors.white,
           elevation: 0,
           leading: IconButton(
-              icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                  size: 20),
+              icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
               onPressed: () => Navigator.pop(context)),
           title: const Text('Checkout'),
         ),
@@ -1674,8 +1748,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12))),
                   child: const Text('Continue Shopping',
-                      style:
-                          TextStyle(fontWeight: FontWeight.w700)),
+                      style: TextStyle(fontWeight: FontWeight.w700)),
                 ),
               ],
             ),
@@ -1689,8 +1762,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
             color: const Color(0xFFFEF2F2),
             border: Border.all(color: const Color(0xFFFECACA)),
             borderRadius: BorderRadius.circular(10)),
-        child:
-            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Icon(Icons.error_outline_rounded,
               color: Color(0xFFDC2626), size: 18),
           const SizedBox(width: 8),
@@ -1708,14 +1780,16 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
       .replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
   String _mon(int m) => const [
         '',
-        'January', 'February', 'March',     'April',   'May',      'June',
-        'July',    'August',   'September', 'October', 'November', 'December',
+        'January', 'February', 'March',    'April',   'May',      'June',
+        'July',    'August',   'September','October', 'November', 'December',
       ][m];
   String _cap(String s) =>
       s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 }
 
-// ── Shared sub-widgets ────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED SUB-WIDGETS  (used by CheckoutPaymentPage)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _Card extends StatelessWidget {
   final Widget child;
@@ -1757,7 +1831,7 @@ class _H extends StatelessWidget {
 
 class _KV extends StatelessWidget {
   final String l, v;
-  final bool mono;
+  final bool  mono;
   final Color? vc;
   const _KV(this.l, this.v, {this.mono = false, this.vc});
 
@@ -1811,8 +1885,7 @@ class _ChipW extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
             color: const Color(0xFFF3F4F6),
             borderRadius: BorderRadius.circular(6)),
@@ -1825,10 +1898,10 @@ class _ChipW extends StatelessWidget {
 }
 
 class _MethodCard extends StatelessWidget {
-  final bool selected;
+  final bool     selected;
   final IconData icon;
-  final Color iconColor, iconBg, accent;
-  final String title, subtitle;
+  final Color    iconColor, iconBg, accent;
+  final String   title, subtitle;
   final VoidCallback onTap;
 
   const _MethodCard({
@@ -1857,8 +1930,7 @@ class _MethodCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(12)),
           child: Row(children: [
             Container(
-              width: 42,
-              height: 42,
+              width: 42, height: 42,
               decoration: BoxDecoration(
                   color: iconBg,
                   borderRadius: BorderRadius.circular(10)),
@@ -1899,9 +1971,9 @@ class _MethodCard extends StatelessWidget {
 
 class _BannerW extends StatelessWidget {
   final IconData icon;
-  final Color iconColor, bg, border;
-  final String title, body;
-  final Widget footer;
+  final Color    iconColor, bg, border;
+  final String   title, body;
+  final Widget   footer;
 
   const _BannerW({
     required this.icon,
@@ -1920,8 +1992,7 @@ class _BannerW extends StatelessWidget {
             color: bg,
             border: Border.all(color: border),
             borderRadius: BorderRadius.circular(12)),
-        child:
-            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Icon(icon, color: iconColor, size: 22),
           const SizedBox(width: 12),
           Expanded(

@@ -503,8 +503,9 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
         : o.createdAt;
 
     Color statusColor;
-    if (o.paymentStatus == 'paid')         statusColor = const Color(0xFF16A34A);
-    else if (o.paymentStatus == 'pending') statusColor = const Color(0xFFD97706);
+    if (o.paymentStatus == 'paid') {
+      statusColor = const Color(0xFF16A34A);
+    } else if (o.paymentStatus == 'pending') statusColor = const Color(0xFFD97706);
     else                                   statusColor = const Color(0xFFDC2626);
 
     return _Tile(
