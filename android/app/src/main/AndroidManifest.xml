@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+    android:maxSdkVersion="29"/>
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+    android:maxSdkVersion="32"/>
+
     <application
         android:label="intercen_app"
         android:name="${applicationName}"
@@ -31,12 +37,26 @@
                 <data android:scheme="intercen" android:host="payment-callback"/>
             </intent-filter>
 
+
         </activity>
+
+        <provider
+    android:name="androidx.core.content.FileProvider"
+    android:authorities="${applicationId}.fileprovider"
+    android:exported="false"
+    android:grantUriPermissions="true">
+  <meta-data
+      android:name="android.support.FILE_PROVIDER_PATHS"
+      android:resource="@xml/file_paths"/>
+</provider>
+
 
         <!-- Required by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2"/>
+
+
     </application>
 
     <!-- Required for Flutter text processing plugin -->

@@ -497,6 +497,37 @@ class AboutPage extends StatelessWidget {
 
   static Widget _teamCard(BuildContext context, Map<String, dynamic> member) {
     final textTheme = Theme.of(context).textTheme;
+    final image = member['image'];
+    Widget avatar;
+    if (image != null && image is String && image.isNotEmpty) {
+      avatar = CircleAvatar(
+        radius: 32,
+        backgroundImage: AssetImage(image),
+        backgroundColor: AppColors.background,
+      );
+    } else {
+      // Show initials if image is null
+      String initials = '';
+      if (member['name'] != null && member['name'] is String) {
+        final parts = (member['name'] as String).split(' ');
+        if (parts.length >= 2) {
+          initials = parts[0][0] + parts[1][0];
+        } else if (parts.isNotEmpty) {
+          initials = parts[0][0];
+        }
+      }
+      avatar = CircleAvatar(
+        radius: 32,
+        backgroundColor: AppColors.primary,
+        child: Text(
+          initials.toUpperCase(),
+          style: textTheme.titleMedium?.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       elevation: 2,
@@ -505,11 +536,7 @@ class AboutPage extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            CircleAvatar(
-              radius: 32,
-              backgroundImage: AssetImage(member['image']),
-              backgroundColor: AppColors.background,
-            ),
+            avatar,
             const SizedBox(height: 8),
             Text(member['name'], style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(height: 4),

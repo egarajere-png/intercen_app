@@ -7,18 +7,73 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:dio/dio.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:open_filex/open_filex.dart';
 
 import '../theme/app_colors.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PROFILE PAGE
 //
-// Returning-user profile hub. Key features:
-//   • Collapsing SliverAppBar with avatar — OVERFLOW FIX applied (see note A)
-//   • View / Edit toggle with dirty-check save bar
-//   • Orders modal: tabbed Active / Completed / Cancelled
-//   • "Pay to read" on unpaid items calls cart-add-item then navigates to cart
-//   • Full order CRUD: retry payment, add-to-cart, cancel, re-order
+// ── Download architecture ─────────────────────────────────────────────────────
+//
+//  No edge function is needed.  Because the buckets (book-files, documets) are
+//  public, we can generate a short-lived signed URL straight from the Flutter
+//  client using the Supabase Storage SDK:
+//
+//    storage.from(bucket).createSignedUrl(objectPath, 60)
+//
+//  The signed URL expires in 60 seconds — long enough for Dio to open the
+//  connection; the download itself is not interrupted after expiry.
+//
+//  Download flow for a paid order item:
+//    1.  Parse content.file_url  →  (bucket, objectPath)
+//        URL shape:  https://<ref>.supabase.co/storage/v1/object/public/<bucket>/<objectPath>
+//    2.  createSignedUrl(objectPath, 60)  →  signedUrl
+//    3.  Build filename:  sanitise(content.title) + '.' + (content.format ?? ext-from-url)
+//    4.  Resolve device save path:
+//          Android → <external>/Android/data/<pkg>/files/Downloads/   (no permission on API 29+)
+//          iOS     → <app>/Documents/                                  (visible in Files.app)
+//    5.  Dio stream-download with live progress updates (per content_id).
+//    6.  Increment content.total_downloads (fire-and-forget).
+//    7.  open_filex hands the saved file to the OS — user picks their viewer.
+//        No navigation inside the app ever happens.
+//
+// ── pubspec.yaml additions ────────────────────────────────────────────────────
+//   dio: ^5.4.0
+//   path_provider: ^2.1.2
+//   permission_handler: ^11.3.0
+//   open_filex: ^4.3.2
+//
+// ── Android — AndroidManifest.xml ─────────────────────────────────────────────
+//  Inside <manifest>:
+//    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+//        android:maxSdkVersion="29"/>
+//    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+//        android:maxSdkVersion="32"/>
+//  Inside <application>:
+//    <provider
+//        android:name="androidx.core.content.FileProvider"
+//        android:authorities="${applicationId}.fileprovider"
+//        android:exported="false"
+//        android:grantUriPermissions="true">
+//      <meta-data
+//          android:name="android.support.FILE_PROVIDER_PATHS"
+//          android:resource="@xml/file_paths"/>
+//    </provider>
+//
+// ── Android — res/xml/file_paths.xml ──────────────────────────────────────────
+//  <?xml version="1.0" encoding="utf-8"?>
+//  <paths>
+//    <external-files-path name="downloads" path="Downloads/"/>
+//    <files-path         name="documents"  path="Documents/"/>
+//  </paths>
+//
+// ── iOS — Info.plist ──────────────────────────────────────────────────────────
+//  <key>UIFileSharingEnabled</key><true/>
+//  <key>LSSupportsOpeningDocumentsInPlace</key><true/>
 // ─────────────────────────────────────────────────────────────────────────────
 
 class ProfilePage extends StatefulWidget {
@@ -33,7 +88,7 @@ class _ProfilePageState extends State<ProfilePage>
   final _sb     = Supabase.instance.client;
   final _picker = ImagePicker();
 
-  // ── Profile data ──────────────────────────────────────────────────────────
+  // ── Profile ───────────────────────────────────────────────────────────────
   Map<String, dynamic>? _profile;
   User? _user;
 
@@ -59,31 +114,25 @@ class _ProfilePageState extends State<ProfilePage>
   String? _avatarUrl;
 
   // ── Orders ────────────────────────────────────────────────────────────────
-  List<Map<String, dynamic>> _orders      = [];
+  List<Map<String, dynamic>> _orders       = [];
   bool                       _ordersLoaded = false;
 
-  // ── UI state ──────────────────────────────────────────────────────────────
-  bool _showOrders = false;
-  bool _isEditing  = false;
-  bool _hasChanges = false;
-  bool _addingToCart = false; // global busy flag while cart-add calls run
+  // ── UI ────────────────────────────────────────────────────────────────────
+  bool _showOrders   = false;
+  bool _isEditing    = false;
+  bool _hasChanges   = false;
+  bool _addingToCart = false;
+
+  // ── Download progress ─────────────────────────────────────────────────────
+  // content_id → 0.0…1.0   (absent = not downloading)
+  final Map<String, double> _dlProgress = {};
 
   late final AnimationController _fadeCtrl;
   late final Animation<double>   _fadeAnim;
 
-  // ─── NOTE A — overflow fix ─────────────────────────────────────────────────
-  // The previous code put name + email + role badge in a Column inside
-  // FlexibleSpaceBar.background.  On phones where the name is long or the
-  // font scale is high, that column overflowed by ~10 px.
-  //
-  // Fix strategy:
-  //   1. Increase expandedHeight from 220 → 270 so there is always room.
-  //   2. Wrap the inner Column in a LayoutBuilder so it can measure available
-  //      space, and mark it mainAxisSize: MainAxisSize.min.
-  //   3. Every text widget that could be long gets maxLines + overflow.ellipsis.
-  //   4. A bottom padding equal to MediaQuery.viewPadding.bottom is added so
-  //      the content never touches the system nav bar on gesture-nav phones.
-  // ──────────────────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LIFECYCLE
+  // ═══════════════════════════════════════════════════════════════════════════
 
   @override
   void initState() {
@@ -104,7 +153,10 @@ class _ProfilePageState extends State<ProfilePage>
     super.dispose();
   }
 
-  // ── Load profile ──────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PROFILE LOAD / SAVE
+  // ═══════════════════════════════════════════════════════════════════════════
+
   Future<void> _loadProfile() async {
     setState(() { _loading = true; _loadError = null; });
     try {
@@ -167,7 +219,6 @@ class _ProfilePageState extends State<ProfilePage>
     });
   }
 
-  // ── Avatar picker ─────────────────────────────────────────────────────────
   Future<void> _pickAvatar() async {
     if (!_isEditing) return;
     final picked = await _picker.pickImage(
@@ -184,7 +235,6 @@ class _ProfilePageState extends State<ProfilePage>
     });
   }
 
-  // ── Save ──────────────────────────────────────────────────────────────────
   Future<void> _save() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     if (!_hasChanges) { _showSnack('No changes to save'); return; }
@@ -237,7 +287,12 @@ class _ProfilePageState extends State<ProfilePage>
     });
   }
 
-  // ── Fetch orders ──────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ORDERS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // NOTE: we now select file_url + format from the content join so the
+  // download function has everything it needs without extra round-trips.
   Future<void> _fetchOrders({bool force = false}) async {
     if (_ordersLoaded && !force) return;
     setState(() => _loadingOrders = true);
@@ -247,9 +302,13 @@ class _ProfilePageState extends State<ProfilePage>
         total_price, created_at,
         order_items(
           id, quantity, unit_price,
-          content:content_id(id, title, cover_image_url, price)
+          content:content_id(
+            id, title, cover_image_url, price,
+            file_url, format, total_downloads
+          )
         )
       ''').eq('user_id', _user!.id).order('created_at', ascending: false);
+
       setState(() {
         _orders       = List<Map<String, dynamic>>.from(data);
         _ordersLoaded = true;
@@ -261,12 +320,9 @@ class _ProfilePageState extends State<ProfilePage>
     }
   }
 
-  // ── Cancel order ──────────────────────────────────────────────────────────
   Future<void> _cancelOrder(String orderId) async {
     if (!await _confirm('Cancel Order',
-        'This order will be cancelled and cannot be undone.')) {
-      return;
-    }
+        'This order will be cancelled and cannot be undone.')) return;
     try {
       await _sb.from('orders').update({
         'status':       'cancelled',
@@ -280,14 +336,6 @@ class _ProfilePageState extends State<ProfilePage>
     }
   }
 
-  // ── Add order items → cart (cart-add-item edge function) ──────────────────
-  //
-  // Called from two places:
-  //   1. "Pay to read" chip on an unpaid item row   → adds just that one item
-  //   2. "Add to Cart" button on the whole order    → adds all unpaid items
-  //   3. "Re-order" on a cancelled order            → adds all items
-  //
-  // After all items are added we close the modal and navigate to /cart.
   Future<void> _addItemsToCart(
     List<Map<String, dynamic>> items, {
     String snackPrefix = '',
@@ -309,16 +357,17 @@ class _ProfilePageState extends State<ProfilePage>
             body: {'content_id': cId, 'quantity': qty},
             headers: {'Authorization': 'Bearer ${session.accessToken}'},
           );
-          // cart-add-item returns {success:true} on 200
           (r.status == 200) ? added++ : failed++;
         } catch (_) { failed++; }
       }
       if (!mounted) return;
       setState(() => _showOrders = false);
-      final msg = failed > 0
-          ? '$snackPrefix$added added, $failed failed. Check cart.'
-          : '$snackPrefix$added item(s) added to cart!';
-      _showSnack(msg, success: added > 0);
+      _showSnack(
+        failed > 0
+            ? '$snackPrefix$added added, $failed failed. Check cart.'
+            : '$snackPrefix$added item(s) added to cart!',
+        success: added > 0,
+      );
       await Future.delayed(const Duration(milliseconds: 350));
       if (mounted) Navigator.pushNamed(context, '/cart');
     } catch (e) {
@@ -328,7 +377,199 @@ class _ProfilePageState extends State<ProfilePage>
     }
   }
 
-  // ── Sign out ──────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DOWNLOAD
+  //
+  // Receives the full content map from order_items.content:
+  //   { id, title, file_url, format, total_downloads, … }
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  Future<void> _downloadContent(Map<String, dynamic> content) async {
+    final cId     = content['id']       as String? ?? '';
+    final title   = content['title']    as String? ?? 'file';
+    final fileUrl = content['file_url'] as String?;
+    final format  = content['format']   as String?;
+
+    // ── Basic guards ───────────────────────────────────────────────────────
+    if (cId.isEmpty) {
+      _showSnack('Cannot download: missing content ID.');
+      return;
+    }
+    if (fileUrl == null || fileUrl.trim().isEmpty) {
+      _showSnack('"$title" has no file attached yet.');
+      return;
+    }
+    if (_dlProgress.containsKey(cId)) return; // already in progress
+
+    // ── 1. Storage permission (Android ≤ 29 only) ──────────────────────────
+    if (Platform.isAndroid) {
+      final sdk = await _androidSdkInt();
+      if (sdk != null && sdk <= 29) {
+        final status = await Permission.storage.request();
+        if (!status.isGranted) {
+          _showSnack('Storage permission required to save files.');
+          return;
+        }
+      }
+    }
+
+    setState(() => _dlProgress[cId] = 0.0);
+
+    try {
+      // ── 2. Parse bucket + object path ─────────────────────────────────
+      //
+      // Supabase public URL format:
+      //   https://<ref>.supabase.co/storage/v1/object/public/<bucket>/<objectPath>
+      //
+      final (bucket, objectPath) = _parseBucketAndPath(fileUrl);
+      if (bucket.isEmpty || objectPath.isEmpty) {
+        throw Exception(
+            'Could not parse storage location from file URL.\n'
+            'URL: $fileUrl');
+      }
+
+      // ── 3. Create a 60-second signed URL ──────────────────────────────
+      //
+      // Even though the bucket is public, a signed URL lets us:
+      //   • Prove the request came from an authenticated session.
+      //   • Keep direct object paths out of client-side logs.
+      // The 60 s expiry is sufficient for Dio to open the TCP connection;
+      // the byte stream is not cut off when the token expires.
+      //
+      final signedUrl = await _sb.storage
+          .from(bucket)
+          .createSignedUrl(objectPath, 60);
+
+      // ── 4. Build filename ──────────────────────────────────────────────
+      final ext      = _ext(format, fileUrl);
+      final filename = '${_safe(title)}.$ext';
+
+      // ── 5. Resolve save path ───────────────────────────────────────────
+      final savePath = await _savePath(filename);
+
+      // ── 6. Stream-download with Dio ────────────────────────────────────
+      await Dio().download(
+        signedUrl,
+        savePath,
+        onReceiveProgress: (got, total) {
+          if (!mounted || total <= 0) return;
+          setState(() =>
+              _dlProgress[cId] = (got / total).clamp(0.0, 1.0));
+        },
+        options: Options(
+          responseType:    ResponseType.bytes,
+          followRedirects: true,
+          receiveTimeout:  const Duration(minutes: 15),
+        ),
+      );
+
+      // ── 7. Bump download counter (fire-and-forget) ─────────────────────
+      final prev = (content['total_downloads'] as num?)?.toInt() ?? 0;
+      _sb.from('content')
+          .update({'total_downloads': prev + 1})
+          .eq('id', cId)
+          .then((_) {})
+          .catchError((_) {});
+
+      // ── 8. Open with system viewer ─────────────────────────────────────
+      final result = await OpenFilex.open(savePath);
+      if (result.type != ResultType.done) {
+        _showSnack(
+          'Saved to ${_shortPath(savePath)}. '
+          'Open it with any compatible app.',
+          success: true,
+        );
+      } else {
+        _showSnack('Download complete ✓', success: true);
+      }
+    } catch (e) {
+      _showSnack(
+          'Download failed: ${e.toString().replaceFirst("Exception: ", "")}');
+    } finally {
+      if (mounted) setState(() => _dlProgress.remove(cId));
+    }
+  }
+
+  // ── Parse bucket + objectPath from a Supabase Storage public URL ──────────
+  //
+  // Handles both:
+  //   …/storage/v1/object/public/<bucket>/<path>
+  //   …/storage/v1/object/sign/<bucket>/<path>
+  //
+  (String, String) _parseBucketAndPath(String url) {
+    try {
+      final segs = Uri.parse(url).pathSegments;
+      for (final marker in ['public', 'sign']) {
+        final i = segs.indexOf(marker);
+        if (i != -1 && i + 1 < segs.length) {
+          return (segs[i + 1], segs.sublist(i + 2).join('/'));
+        }
+      }
+    } catch (_) {}
+    return ('', '');
+  }
+
+  // ── Determine file extension ───────────────────────────────────────────────
+  // Prefers content.format (the column is constrained to known values).
+  // Falls back to the extension already embedded in the URL path.
+  String _ext(String? format, String fallbackUrl) {
+    if (format != null && format.trim().isNotEmpty) return format.trim();
+    final last = fallbackUrl.split('/').last.split('?').first;
+    final dot  = last.lastIndexOf('.');
+    return (dot != -1 && dot < last.length - 1)
+        ? last.substring(dot + 1)
+        : 'pdf';
+  }
+
+  // ── Sanitise a title for use as a filename ────────────────────────────────
+  String _safe(String raw) => raw
+      .replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim()
+      .substring(0, raw.length.clamp(0, 120));
+
+  // ── Resolve platform save directory ───────────────────────────────────────
+  Future<String> _savePath(String filename) async {
+    late Directory dir;
+    if (Platform.isAndroid) {
+      final ext = await getExternalStorageDirectory();
+      dir = ext != null
+          ? Directory('${ext.path}/Downloads')
+          : await getApplicationDocumentsDirectory();
+    } else {
+      dir = await getApplicationDocumentsDirectory();
+    }
+    if (!dir.existsSync()) dir.createSync(recursive: true);
+
+    final dot  = filename.lastIndexOf('.');
+    final base = dot != -1 ? filename.substring(0, dot) : filename;
+    final ext2 = dot != -1 ? filename.substring(dot)    : '';
+
+    String path  = '${dir.path}/$filename';
+    int    n     = 1;
+    while (File(path).existsSync()) {
+      path = '${dir.path}/$base ($n)$ext2';
+      n++;
+    }
+    return path;
+  }
+
+  String _shortPath(String full) {
+    final p = full.split(Platform.pathSeparator);
+    return p.length > 2 ? '…/${p[p.length - 2]}/${p.last}' : full;
+  }
+
+  Future<int?> _androidSdkInt() async {
+    try {
+      const ch = MethodChannel('com.yourapp/device_info');
+      return await ch.invokeMethod<int>('getSdkInt');
+    } catch (_) { return null; }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AUTH
+  // ═══════════════════════════════════════════════════════════════════════════
+
   Future<void> _signOut() async {
     if (!await _confirm('Sign Out', 'Are you sure you want to sign out?')) return;
     await _sb.auth.signOut();
@@ -337,7 +578,10 @@ class _ProfilePageState extends State<ProfilePage>
     }
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+  // UI HELPERS
+  // ═══════════════════════════════════════════════════════════════════════════
+
   void _showSnack(String msg, {bool success = false}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -371,19 +615,15 @@ class _ProfilePageState extends State<ProfilePage>
                 child: const Text('Confirm')),
           ],
         ),
-      ) ??
-      false;
+      ) ?? false;
 
   String? _nullIfEmpty(String s) => s.trim().isEmpty ? null : s.trim();
 
-  InputDecoration _fieldDeco(String label,
-          {String? hint, IconData? icon}) =>
+  InputDecoration _fieldDeco(String label, {String? hint, IconData? icon}) =>
       InputDecoration(
-        labelText: label,
-        hintText: hint,
+        labelText: label, hintText: hint,
         prefixIcon: icon != null
-            ? Icon(icon, size: 20, color: const Color(0xFF9CA3AF))
-            : null,
+            ? Icon(icon, size: 20, color: const Color(0xFF9CA3AF)) : null,
         labelStyle: const TextStyle(
             fontFamily: 'DM Sans', fontSize: 13, color: Color(0xFF6B7280)),
         hintStyle: const TextStyle(
@@ -392,30 +632,24 @@ class _ProfilePageState extends State<ProfilePage>
         fillColor: _isEditing ? Colors.white : const Color(0xFFF9FAFB),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
-        enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
-        disabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+        disabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: Color(0xFFF3F4F6))),
-        focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(color: AppColors.primary, width: 2)),
-        errorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
+        errorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
             borderSide: const BorderSide(color: Color(0xFFEF4444))),
-        focusedErrorBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide:
-                const BorderSide(color: Color(0xFFEF4444), width: 2)),
+        focusedErrorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFEF4444), width: 2)),
       );
 
-  // ════════════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
   // BUILD
-  // ════════════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════════
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return _loadingView();
@@ -459,7 +693,6 @@ class _ProfilePageState extends State<ProfilePage>
         ),
         if (_isEditing) _buildSaveBar(),
         if (_showOrders) _buildOrdersOverlay(),
-        // Full-screen busy overlay while cart calls are running
         if (_addingToCart)
           Container(
             color: Colors.black38,
@@ -471,8 +704,7 @@ class _ProfilePageState extends State<ProfilePage>
                     borderRadius: BorderRadius.circular(16)),
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
                   CircularProgressIndicator(
-                      valueColor:
-                          AlwaysStoppedAnimation(AppColors.primary)),
+                      valueColor: AlwaysStoppedAnimation(AppColors.primary)),
                   const SizedBox(height: 16),
                   const Text('Adding to cart…',
                       style: TextStyle(
@@ -487,190 +719,157 @@ class _ProfilePageState extends State<ProfilePage>
     );
   }
 
-  // ── SliverAppBar — OVERFLOW FIX ───────────────────────────────────────────
-  Widget _buildSliverAppBar() {
-    // expandedHeight is 270 — generous enough for any font scale.
-    // The inner Column is mainAxisSize.min so it shrinks on smaller phones
-    // instead of overflowing.
-    return SliverAppBar(
-      expandedHeight: 270,
-      pinned: true,
-      backgroundColor: Colors.white,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      leading: IconButton(
-        icon: const Icon(Icons.arrow_back_ios_new_rounded,
-            size: 20, color: Color(0xFF1A1A2E)),
-        onPressed: () => Navigator.pop(context),
-      ),
-      actions: [
-        if (!_isEditing)
-          TextButton.icon(
-            onPressed: () => setState(() => _isEditing = true),
-            icon: Icon(Icons.edit_outlined, size: 16, color: AppColors.primary),
-            label: Text('Edit',
-                style: TextStyle(
-                    fontFamily: 'DM Sans',
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.primary)),
-          )
-        else
-          TextButton(
-            onPressed: _discardEdits,
-            child: const Text('Cancel',
-                style: TextStyle(
-                    fontFamily: 'DM Sans', color: Color(0xFF6B7280))),
-          ),
-        const SizedBox(width: 4),
-      ],
-      flexibleSpace: FlexibleSpaceBar(
-        collapseMode: CollapseMode.pin,
-        background: SafeArea(
-          // ── OVERFLOW FIX: top padding = appBar height so content
-          //   sits below the title/actions row, never under it.
-          child: Padding(
-            padding: const EdgeInsets.only(top: 56),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,       // shrink-wrap
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const SizedBox(height: 6),
-                // Avatar
-                GestureDetector(
-                  onTap: _pickAvatar,
-                  child: Stack(alignment: Alignment.bottomRight, children: [
-                    Container(
-                      width: 78, height: 78,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                            color: AppColors.primary.withOpacity(0.25),
-                            width: 3),
-                        boxShadow: [
-                          BoxShadow(
-                              color: Colors.black.withOpacity(0.08),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4))
-                        ],
-                      ),
-                      child: ClipOval(
-                        child: _avatarFile != null
-                            ? Image.file(_avatarFile!, fit: BoxFit.cover)
-                            : _avatarUrl != null && _avatarUrl!.isNotEmpty
-                                ? CachedNetworkImage(
-                                    imageUrl: _avatarUrl!,
-                                    fit: BoxFit.cover,
-                                    placeholder: (_, __) => Container(
-                                        color: const Color(0xFFF3F4F6)),
-                                    errorWidget: (_, __, ___) =>
-                                        _avatarFallback())
-                                : _avatarFallback(),
-                      ),
-                    ),
-                    if (_isEditing)
+  // ── SliverAppBar ──────────────────────────────────────────────────────────
+  Widget _buildSliverAppBar() => SliverAppBar(
+        expandedHeight: 270,
+        pinned: true,
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded,
+              size: 20, color: Color(0xFF1A1A2E)),
+          onPressed: () => Navigator.pop(context),
+        ),
+        actions: [
+          if (!_isEditing)
+            TextButton.icon(
+              onPressed: () => setState(() => _isEditing = true),
+              icon: Icon(Icons.edit_outlined, size: 16, color: AppColors.primary),
+              label: Text('Edit',
+                  style: TextStyle(
+                      fontFamily: 'DM Sans',
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary)),
+            )
+          else
+            TextButton(
+              onPressed: _discardEdits,
+              child: const Text('Cancel',
+                  style: TextStyle(
+                      fontFamily: 'DM Sans', color: Color(0xFF6B7280))),
+            ),
+          const SizedBox(width: 4),
+        ],
+        flexibleSpace: FlexibleSpaceBar(
+          collapseMode: CollapseMode.pin,
+          background: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.only(top: 56),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const SizedBox(height: 6),
+                  GestureDetector(
+                    onTap: _pickAvatar,
+                    child: Stack(alignment: Alignment.bottomRight, children: [
                       Container(
-                        width: 26, height: 26,
+                        width: 78, height: 78,
                         decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            shape: BoxShape.circle,
-                            border:
-                                Border.all(color: Colors.white, width: 2)),
-                        child: const Icon(Icons.camera_alt_rounded,
-                            size: 12, color: Colors.white),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: AppColors.primary.withOpacity(0.25),
+                              width: 3),
+                          boxShadow: [
+                            BoxShadow(
+                                color: Colors.black.withOpacity(0.08),
+                                blurRadius: 12,
+                                offset: const Offset(0, 4))
+                          ],
+                        ),
+                        child: ClipOval(
+                          child: _avatarFile != null
+                              ? Image.file(_avatarFile!, fit: BoxFit.cover)
+                              : _avatarUrl != null && _avatarUrl!.isNotEmpty
+                                  ? CachedNetworkImage(
+                                      imageUrl: _avatarUrl!,
+                                      fit: BoxFit.cover,
+                                      placeholder: (_, __) => Container(
+                                          color: const Color(0xFFF3F4F6)),
+                                      errorWidget: (_, __, ___) =>
+                                          _avatarFallback())
+                                  : _avatarFallback(),
+                        ),
                       ),
-                  ]),
-                ),
-
-                const SizedBox(height: 10),
-
-                // ── OVERFLOW FIX: constrain width + maxLines on every text ──
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 28),
-                  child: Text(
-                    _fullNameCtrl.text.isNotEmpty
-                        ? _fullNameCtrl.text
-                        : 'Your Name',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                        fontFamily: 'PlayfairDisplay',
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF111827)),
+                      if (_isEditing)
+                        Container(
+                          width: 26, height: 26,
+                          decoration: BoxDecoration(
+                              color: AppColors.primary,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 2)),
+                          child: const Icon(Icons.camera_alt_rounded,
+                              size: 12, color: Colors.white),
+                        ),
+                    ]),
                   ),
-                ),
-
-                const SizedBox(height: 2),
-
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 32),
-                  child: Text(
-                    _user?.email ?? '',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                        fontFamily: 'DM Sans',
-                        fontSize: 12,
-                        color: Color(0xFF9CA3AF)),
+                  const SizedBox(height: 10),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 28),
+                    child: Text(
+                      _fullNameCtrl.text.isNotEmpty
+                          ? _fullNameCtrl.text : 'Your Name',
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontFamily: 'PlayfairDisplay', fontSize: 18,
+                          fontWeight: FontWeight.w800, color: Color(0xFF111827)),
+                    ),
                   ),
-                ),
-
-                const SizedBox(height: 7),
-
-                _RoleBadge(_profile?['role'] as String? ?? 'reader'),
-
-                // Bottom breathing room — prevents badge touching the divider
-                const SizedBox(height: 14),
-              ],
+                  const SizedBox(height: 2),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Text(
+                      _user?.email ?? '',
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                          fontFamily: 'DM Sans', fontSize: 12,
+                          color: Color(0xFF9CA3AF)),
+                    ),
+                  ),
+                  const SizedBox(height: 7),
+                  _RoleBadge(_profile?['role'] as String? ?? 'reader'),
+                  const SizedBox(height: 14),
+                ],
+              ),
             ),
           ),
         ),
-      ),
-      bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(1),
-        child: Container(height: 1, color: const Color(0xFFE5E7EB)),
-      ),
-    );
-  }
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(height: 1, color: const Color(0xFFE5E7EB)),
+        ),
+      );
 
-  // ── Quick action cards ────────────────────────────────────────────────────
+  // ── Quick actions ─────────────────────────────────────────────────────────
   Widget _buildQuickActions() => Row(children: [
         _QuickCard(
-          icon: Icons.receipt_long_outlined,
-          label: 'My Orders',
+          icon: Icons.receipt_long_outlined, label: 'My Orders',
           count: _ordersLoaded ? '${_orders.length}' : null,
-          color: const Color(0xFF2563EB),
-          bg: const Color(0xFFEFF6FF),
-          onTap: () {
-            setState(() => _showOrders = true);
-            _fetchOrders();
-          },
+          color: const Color(0xFF2563EB), bg: const Color(0xFFEFF6FF),
+          onTap: () { setState(() => _showOrders = true); _fetchOrders(); },
         ),
         const SizedBox(width: 12),
         _QuickCard(
-          icon: Icons.library_books_outlined,
-          label: 'My Content',
-          color: const Color(0xFF7C3AED),
-          bg: const Color(0xFFF5F3FF),
+          icon: Icons.library_books_outlined, label: 'My Content',
+          color: const Color(0xFF7C3AED), bg: const Color(0xFFF5F3FF),
           onTap: () => Navigator.pushNamed(context, '/content-management'),
         ),
         const SizedBox(width: 12),
         _QuickCard(
-          icon: Icons.shopping_bag_outlined,
-          label: 'Shop',
-          color: AppColors.primary,
-          bg: AppColors.primary.withOpacity(0.08),
+          icon: Icons.shopping_bag_outlined, label: 'Shop',
+          color: AppColors.primary, bg: AppColors.primary.withOpacity(0.08),
           onTap: () => Navigator.pushNamed(context, '/books'),
         ),
       ]);
 
-  // ── Identity card ─────────────────────────────────────────────────────────
+  // ── Form cards ────────────────────────────────────────────────────────────
   Widget _buildIdentityCard() => _Card(
         child: Column(children: [
-          _ReadOnly(label: 'Email',
-              value: _user?.email ?? '', icon: Icons.email_outlined),
+          _ReadOnly(label: 'Email', value: _user?.email ?? '',
+              icon: Icons.email_outlined),
           const SizedBox(height: 16),
           TextFormField(
             controller: _fullNameCtrl,
@@ -685,26 +884,20 @@ class _ProfilePageState extends State<ProfilePage>
           const Align(
             alignment: Alignment.centerLeft,
             child: Text('Account Type',
-                style: TextStyle(
-                    fontFamily: 'DM Sans',
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF374151))),
+                style: TextStyle(fontFamily: 'DM Sans', fontSize: 13,
+                    fontWeight: FontWeight.w600, color: Color(0xFF374151))),
           ),
           const SizedBox(height: 8),
           Row(children: [
-            _TypeChip(
-                label: 'Personal', icon: Icons.person_rounded,
+            _TypeChip(label: 'Personal', icon: Icons.person_rounded,
                 selected: _accountType == 'personal', enabled: _isEditing,
                 onTap: () { if (_isEditing) setState(() { _accountType = 'personal'; _onFieldChanged(); }); }),
             const SizedBox(width: 8),
-            _TypeChip(
-                label: 'Corporate', icon: Icons.business_rounded,
+            _TypeChip(label: 'Corporate', icon: Icons.business_rounded,
                 selected: _accountType == 'corporate', enabled: _isEditing,
                 onTap: () { if (_isEditing) setState(() { _accountType = 'corporate'; _onFieldChanged(); }); }),
             const SizedBox(width: 8),
-            _TypeChip(
-                label: 'Institution', icon: Icons.school_rounded,
+            _TypeChip(label: 'Institution', icon: Icons.school_rounded,
                 selected: _accountType == 'institutional', enabled: _isEditing,
                 onTap: () { if (_isEditing) setState(() { _accountType = 'institutional'; _onFieldChanged(); }); }),
           ]),
@@ -714,8 +907,7 @@ class _ProfilePageState extends State<ProfilePage>
               controller: _orgCtrl,
               decoration: _fieldDeco(
                   _accountType == 'corporate'
-                      ? 'Company / Organization'
-                      : 'Institution',
+                      ? 'Company / Organization' : 'Institution',
                   icon: Icons.domain_rounded),
               enabled: _isEditing,
               style: const TextStyle(fontFamily: 'DM Sans', fontSize: 14),
@@ -738,11 +930,8 @@ class _ProfilePageState extends State<ProfilePage>
             controller: _phoneCtrl,
             decoration: _fieldDeco('Phone Number',
                 hint: '+254 712 345 678', icon: Icons.phone_outlined),
-            enabled: _isEditing,
-            keyboardType: TextInputType.phone, maxLength: 20,
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(RegExp(r'[+\d\s\-()]')),
-            ],
+            enabled: _isEditing, keyboardType: TextInputType.phone, maxLength: 20,
+            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[+\d\s\-()]'))],
             style: const TextStyle(fontFamily: 'DM Sans', fontSize: 14),
           ),
           const SizedBox(height: 16),
@@ -760,8 +949,7 @@ class _ProfilePageState extends State<ProfilePage>
   Widget _buildBioCard() => _Card(
         child: TextFormField(
           controller: _bioCtrl,
-          decoration:
-              _fieldDeco('Bio', hint: 'A few words about yourself…'),
+          decoration: _fieldDeco('Bio', hint: 'A few words about yourself…'),
           enabled: _isEditing, maxLines: 5, maxLength: 500,
           style: const TextStyle(fontFamily: 'DM Sans', fontSize: 14),
         ),
@@ -769,13 +957,11 @@ class _ProfilePageState extends State<ProfilePage>
 
   Widget _buildAccountCard() => _Card(
         child: Column(children: [
-          _ReadOnly(
-              label: 'Role',
+          _ReadOnly(label: 'Role',
               value: _cap(_profile?['role'] as String? ?? 'reader'),
               icon: Icons.verified_user_outlined),
           const SizedBox(height: 16),
-          _ReadOnly(
-              label: 'Member Since',
+          _ReadOnly(label: 'Member Since',
               value: _fmtDate(_profile?['created_at'] as String?),
               icon: Icons.calendar_today_outlined),
         ]),
@@ -787,10 +973,8 @@ class _ProfilePageState extends State<ProfilePage>
           onPressed: _signOut,
           icon: Icon(Icons.logout_rounded, size: 18, color: AppColors.primary),
           label: Text('Sign Out',
-              style: TextStyle(
-                  fontFamily: 'DM Sans',
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.primary)),
+              style: TextStyle(fontFamily: 'DM Sans',
+                  fontWeight: FontWeight.w700, color: AppColors.primary)),
           style: OutlinedButton.styleFrom(
               side: BorderSide(color: AppColors.primary.withOpacity(0.4)),
               shape: RoundedRectangleBorder(
@@ -806,248 +990,197 @@ class _ProfilePageState extends State<ProfilePage>
           decoration: BoxDecoration(
             color: Colors.white,
             border: const Border(top: BorderSide(color: Color(0xFFE5E7EB))),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withOpacity(0.06),
-                  blurRadius: 16,
-                  offset: const Offset(0, -4))
-            ],
+            boxShadow: [BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 16, offset: const Offset(0, -4))],
           ),
           child: SizedBox(
             width: double.infinity, height: 52,
             child: ElevatedButton(
               onPressed: (_saving || !_hasChanges) ? null : _save,
               style: ElevatedButton.styleFrom(
-                  backgroundColor: _hasChanges
-                      ? AppColors.primary
-                      : const Color(0xFFE5E7EB),
-                  foregroundColor: _hasChanges
-                      ? Colors.white
-                      : const Color(0xFF9CA3AF),
+                  backgroundColor:
+                      _hasChanges ? AppColors.primary : const Color(0xFFE5E7EB),
+                  foregroundColor:
+                      _hasChanges ? Colors.white : const Color(0xFF9CA3AF),
                   elevation: _hasChanges ? 2 : 0,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14))),
               child: _saving
-                  ? const SizedBox(
-                      width: 22, height: 22,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          valueColor:
-                              AlwaysStoppedAnimation(Colors.white)))
+                  ? const SizedBox(width: 22, height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.5,
+                          valueColor: AlwaysStoppedAnimation(Colors.white)))
                   : const Text('Save Changes',
-                      style: TextStyle(
-                          fontFamily: 'DM Sans',
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700)),
+                      style: TextStyle(fontFamily: 'DM Sans',
+                          fontSize: 16, fontWeight: FontWeight.w700)),
             ),
           ),
         ),
       );
 
-  // ════════════════════════════════════════════════════════════════════════════
-  // ORDERS OVERLAY — tabbed modal with full CRUD
-  //
-  // Tab layout:
-  //   Active     = pending + processing (unpaid or awaiting delivery)
-  //   Completed  = status=completed OR payment_status=paid
-  //   Cancelled  = status=cancelled
-  //
-  // Per-order actions:
-  //   Active    → "Pay Now" (retry payment page)
-  //              "Pay to Read / Add to Cart" (cart-add-item + navigate /cart)
-  //              "Cancel Order"
-  //   Completed → "Read" per item, "View Receipt"
-  //   Cancelled → "Re-order" (add all items to cart)
-  // ════════════════════════════════════════════════════════════════════════════
-  Widget _buildOrdersOverlay() {
-    return GestureDetector(
-      onTap: () => setState(() => _showOrders = false),
-      child: Container(
-        color: Colors.black54,
-        alignment: Alignment.bottomCenter,
-        child: GestureDetector(
-          onTap: () {}, // absorb taps inside sheet
-          child: Container(
-            height: MediaQuery.of(context).size.height * 0.90,
-            decoration: const BoxDecoration(
-                color: Color(0xFFF9F5EF),
-                borderRadius:
-                    BorderRadius.vertical(top: Radius.circular(24))),
-            child: DefaultTabController(
-              length: 3,
-              child: Column(children: [
-                // Drag handle
-                Container(
-                    width: 40, height: 4,
-                    margin: const EdgeInsets.only(top: 12),
-                    decoration: BoxDecoration(
-                        color: const Color(0xFFD1D5DB),
-                        borderRadius: BorderRadius.circular(2))),
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ORDERS OVERLAY
+  // ═══════════════════════════════════════════════════════════════════════════
 
-                // Header
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 8, 0),
-                  child: Row(children: [
-                    const Text('My Orders',
-                        style: TextStyle(
-                            fontFamily: 'PlayfairDisplay',
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF111827))),
-                    if (_ordersLoaded)
-                      Container(
-                        margin: const EdgeInsets.only(left: 8),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                            color: AppColors.primary.withOpacity(0.08),
-                            borderRadius: BorderRadius.circular(10)),
-                        child: Text('${_orders.length}',
-                            style: TextStyle(
-                                fontFamily: 'DM Sans',
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.primary)),
+  Widget _buildOrdersOverlay() => GestureDetector(
+        onTap: () => setState(() => _showOrders = false),
+        child: Container(
+          color: Colors.black54,
+          alignment: Alignment.bottomCenter,
+          child: GestureDetector(
+            onTap: () {},
+            child: Container(
+              height: MediaQuery.of(context).size.height * 0.90,
+              decoration: const BoxDecoration(
+                  color: Color(0xFFF9F5EF),
+                  borderRadius:
+                      BorderRadius.vertical(top: Radius.circular(24))),
+              child: DefaultTabController(
+                length: 3,
+                child: Column(children: [
+                  Container(
+                      width: 40, height: 4,
+                      margin: const EdgeInsets.only(top: 12),
+                      decoration: BoxDecoration(
+                          color: const Color(0xFFD1D5DB),
+                          borderRadius: BorderRadius.circular(2))),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 8, 0),
+                    child: Row(children: [
+                      const Text('My Orders',
+                          style: TextStyle(fontFamily: 'PlayfairDisplay',
+                              fontSize: 20, fontWeight: FontWeight.w800,
+                              color: Color(0xFF111827))),
+                      if (_ordersLoaded)
+                        Container(
+                          margin: const EdgeInsets.only(left: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                              color: AppColors.primary.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(10)),
+                          child: Text('${_orders.length}',
+                              style: TextStyle(fontFamily: 'DM Sans',
+                                  fontSize: 12, fontWeight: FontWeight.w700,
+                                  color: AppColors.primary)),
+                        ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.refresh_rounded,
+                            color: Color(0xFF6B7280), size: 20),
+                        onPressed: () => _fetchOrders(force: true),
+                        tooltip: 'Refresh',
                       ),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.refresh_rounded,
-                          color: Color(0xFF6B7280), size: 20),
-                      onPressed: () => _fetchOrders(force: true),
-                      tooltip: 'Refresh',
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close_rounded,
-                          color: Color(0xFF6B7280)),
-                      onPressed: () => setState(() => _showOrders = false),
-                    ),
-                  ]),
-                ),
-
-                // Pill tab bar
-                Container(
-                  margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-                  decoration: BoxDecoration(
-                      color: const Color(0xFFE5E7EB),
-                      borderRadius: BorderRadius.circular(10)),
-                  padding: const EdgeInsets.all(3),
-                  child: TabBar(
-                    indicator: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        boxShadow: [
-                          BoxShadow(
-                              color: Colors.black.withOpacity(0.06),
-                              blurRadius: 4)
-                        ]),
-                    indicatorSize: TabBarIndicatorSize.tab,
-                    labelColor: const Color(0xFF111827),
-                    unselectedLabelColor: const Color(0xFF6B7280),
-                    labelStyle: const TextStyle(
-                        fontFamily: 'DM Sans',
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700),
-                    unselectedLabelStyle: const TextStyle(
-                        fontFamily: 'DM Sans', fontSize: 12),
-                    dividerColor: Colors.transparent,
-                    tabs: [
-                      _TabLabel('Active',    _countByStatus(['pending', 'processing'])),
-                      _TabLabel('Completed', _countByStatus(['completed', '__paid__'])),
-                      _TabLabel('Cancelled', _countByStatus(['cancelled'])),
-                    ],
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded,
+                            color: Color(0xFF6B7280)),
+                        onPressed: () => setState(() => _showOrders = false),
+                      ),
+                    ]),
                   ),
-                ),
-
-                const SizedBox(height: 4),
-                const Divider(height: 1),
-
-                // Content
-                Expanded(
-                  child: _loadingOrders
-                      ? Center(
-                          child: CircularProgressIndicator(
-                              valueColor: AlwaysStoppedAnimation(
-                                  AppColors.primary)))
-                      : _orders.isEmpty
-                          ? _emptyOrdersState()
-                          : TabBarView(children: [
-                              _OrderList(
-                                orders: _activeOrders,
-                                onPayNow:     _onPayNow,
-                                onAddToCart:  (o) => _addItemsToCart(
-                                    List<Map<String,dynamic>>.from(
-                                        o['order_items'] ?? []),
-                                    snackPrefix: 'Order items '),
-                                onCancelOrder: _cancelOrder,
-                                onReadItem:   _onReadItem,
-                                // "Pay to read" single-item shortcut
-                                onPayToRead:  (item) =>
-                                    _addItemsToCart([item],
-                                        snackPrefix: 'Book '),
-                              ),
-                              _OrderList(
-                                orders: _completedOrders,
-                                onPayNow:     _onPayNow,
-                                onAddToCart:  (_) {},
-                                onCancelOrder: (_) {},
-                                onReadItem:   _onReadItem,
-                                onPayToRead:  (_) {},
-                              ),
-                              _OrderList(
-                                orders: _cancelledOrders,
-                                onPayNow:     _onPayNow,
-                                onAddToCart:  (o) => _addItemsToCart(
-                                    List<Map<String,dynamic>>.from(
-                                        o['order_items'] ?? []),
-                                    snackPrefix: 'Re-order '),
-                                onCancelOrder: (_) {},
-                                onReadItem:   _onReadItem,
-                                onPayToRead:  (_) {},
-                              ),
-                            ]),
-                ),
-              ]),
+                  Container(
+                    margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                    decoration: BoxDecoration(
+                        color: const Color(0xFFE5E7EB),
+                        borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.all(3),
+                    child: TabBar(
+                      indicator: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [BoxShadow(
+                              color: Colors.black.withOpacity(0.06),
+                              blurRadius: 4)]),
+                      indicatorSize: TabBarIndicatorSize.tab,
+                      labelColor: const Color(0xFF111827),
+                      unselectedLabelColor: const Color(0xFF6B7280),
+                      labelStyle: const TextStyle(fontFamily: 'DM Sans',
+                          fontSize: 12, fontWeight: FontWeight.w700),
+                      unselectedLabelStyle: const TextStyle(
+                          fontFamily: 'DM Sans', fontSize: 12),
+                      dividerColor: Colors.transparent,
+                      tabs: [
+                        _tabLabel('Active',
+                            _countByStatus(['pending', 'processing'])),
+                        _tabLabel('Completed',
+                            _countByStatus(['completed', '__paid__'])),
+                        _tabLabel('Cancelled',
+                            _countByStatus(['cancelled'])),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: _loadingOrders
+                        ? Center(child: CircularProgressIndicator(
+                            valueColor: AlwaysStoppedAnimation(AppColors.primary)))
+                        : _orders.isEmpty
+                            ? _emptyOrdersState()
+                            : TabBarView(children: [
+                                _OrderList(
+                                  orders: _activeOrders,
+                                  dlProgress: _dlProgress,
+                                  onPayNow: _onPayNow,
+                                  onAddToCart: (o) => _addItemsToCart(
+                                      List<Map<String, dynamic>>.from(
+                                          o['order_items'] ?? []),
+                                      snackPrefix: 'Order items '),
+                                  onCancelOrder: _cancelOrder,
+                                  onDownload: _downloadContent,
+                                  onPayToRead: (item) => _addItemsToCart(
+                                      [item], snackPrefix: 'Book '),
+                                ),
+                                _OrderList(
+                                  orders: _completedOrders,
+                                  dlProgress: _dlProgress,
+                                  onPayNow: _onPayNow,
+                                  onAddToCart: (_) {},
+                                  onCancelOrder: (_) {},
+                                  onDownload: _downloadContent,
+                                  onPayToRead: (_) {},
+                                ),
+                                _OrderList(
+                                  orders: _cancelledOrders,
+                                  dlProgress: _dlProgress,
+                                  onPayNow: _onPayNow,
+                                  onAddToCart: (o) => _addItemsToCart(
+                                      List<Map<String, dynamic>>.from(
+                                          o['order_items'] ?? []),
+                                      snackPrefix: 'Re-order '),
+                                  onCancelOrder: (_) {},
+                                  onDownload: _downloadContent,
+                                  onPayToRead: (_) {},
+                                ),
+                              ]),
+                  ),
+                ]),
+              ),
             ),
           ),
         ),
-      ),
-    );
-  }
+      );
 
-  // ── Order filter helpers ──────────────────────────────────────────────────
-  List<Map<String, dynamic>> get _activeOrders => _orders
-      .where((o) =>
-          ['pending', 'processing'].contains(o['status']) &&
-          o['payment_status'] != 'paid')
-      .toList();
+  // ── Filters ───────────────────────────────────────────────────────────────
+  List<Map<String, dynamic>> get _activeOrders => _orders.where((o) =>
+      ['pending', 'processing'].contains(o['status']) &&
+      o['payment_status'] != 'paid').toList();
 
-  List<Map<String, dynamic>> get _completedOrders => _orders
-      .where((o) =>
-          o['status'] == 'completed' || o['payment_status'] == 'paid')
-      .toList();
+  List<Map<String, dynamic>> get _completedOrders => _orders.where((o) =>
+      o['status'] == 'completed' || o['payment_status'] == 'paid').toList();
 
   List<Map<String, dynamic>> get _cancelledOrders =>
       _orders.where((o) => o['status'] == 'cancelled').toList();
 
-  int _countByStatus(List<String> statuses) {
-    if (statuses.contains('__paid__')) {
-      return _completedOrders.length;
-    }
-    return _orders
-        .where((o) => statuses.contains(o['status']))
-        .length;
+  int _countByStatus(List<String> ss) {
+    if (ss.contains('__paid__')) return _completedOrders.length;
+    return _orders.where((o) => ss.contains(o['status'])).length;
   }
 
-  // ── Order action callbacks ────────────────────────────────────────────────
   void _onPayNow(String orderId, String orderNumber) {
     setState(() => _showOrders = false);
     Navigator.pushNamed(context, '/checkout/payment',
         arguments: {'order_id': orderId, 'order_number': orderNumber});
-  }
-
-  void _onReadItem(String contentId) {
-    setState(() => _showOrders = false);
-    Navigator.pushNamed(context, '/content/$contentId');
   }
 
   Widget _emptyOrdersState() => Center(
@@ -1056,17 +1189,12 @@ class _ProfilePageState extends State<ProfilePage>
               size: 64, color: const Color(0xFFD1D5DB)),
           const SizedBox(height: 16),
           const Text('No orders yet',
-              style: TextStyle(
-                  fontFamily: 'PlayfairDisplay',
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF6B7280))),
+              style: TextStyle(fontFamily: 'PlayfairDisplay', fontSize: 18,
+                  fontWeight: FontWeight.w700, color: Color(0xFF6B7280))),
           const SizedBox(height: 8),
           const Text('Books you purchase will appear here.',
-              style: TextStyle(
-                  fontFamily: 'DM Sans',
-                  fontSize: 13,
-                  color: Color(0xFF9CA3AF))),
+              style: TextStyle(fontFamily: 'DM Sans',
+                  fontSize: 13, color: Color(0xFF9CA3AF))),
           const SizedBox(height: 24),
           ElevatedButton(
             onPressed: () {
@@ -1084,7 +1212,6 @@ class _ProfilePageState extends State<ProfilePage>
         ]),
       );
 
-  // ── Utility views ─────────────────────────────────────────────────────────
   Widget _avatarFallback() => Container(
         color: const Color(0xFFF3F4F6),
         child: const Icon(Icons.person_rounded,
@@ -1093,56 +1220,43 @@ class _ProfilePageState extends State<ProfilePage>
   Widget _loadingView() => Scaffold(
         backgroundColor: const Color(0xFFF9F5EF),
         body: Center(
-            child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+            child: Column(mainAxisAlignment: MainAxisAlignment.center,
                 children: [
               CircularProgressIndicator(
                   valueColor: AlwaysStoppedAnimation(AppColors.primary)),
               const SizedBox(height: 20),
               const Text('Loading profile…',
-                  style: TextStyle(
-                      fontFamily: 'DM Sans',
-                      color: Color(0xFF6B7280),
-                      fontSize: 14)),
+                  style: TextStyle(fontFamily: 'DM Sans',
+                      color: Color(0xFF6B7280), fontSize: 14)),
             ])));
 
   Widget _errorView() => Scaffold(
         backgroundColor: const Color(0xFFF9F5EF),
-        appBar: AppBar(
-            backgroundColor: Colors.white,
-            elevation: 0,
+        appBar: AppBar(backgroundColor: Colors.white, elevation: 0,
             leading: IconButton(
                 icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
                 onPressed: () => Navigator.pop(context))),
         body: Center(
             child: Padding(
           padding: const EdgeInsets.all(32),
-          child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline_rounded,
-                    size: 60, color: Color(0xFFEF4444)),
-                const SizedBox(height: 16),
-                const Text('Could not load profile',
-                    style: TextStyle(
-                        fontFamily: 'PlayfairDisplay',
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800)),
-                const SizedBox(height: 8),
-                Text(_loadError ?? '',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                        fontFamily: 'DM Sans',
-                        color: Color(0xFF6B7280),
-                        height: 1.5)),
-                const SizedBox(height: 24),
-                ElevatedButton(
-                    onPressed: _loadProfile,
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white),
-                    child: const Text('Try Again')),
-              ]),
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            const Icon(Icons.error_outline_rounded,
+                size: 60, color: Color(0xFFEF4444)),
+            const SizedBox(height: 16),
+            const Text('Could not load profile',
+                style: TextStyle(fontFamily: 'PlayfairDisplay',
+                    fontSize: 20, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            Text(_loadError ?? '', textAlign: TextAlign.center,
+                style: const TextStyle(fontFamily: 'DM Sans',
+                    color: Color(0xFF6B7280), height: 1.5)),
+            const SizedBox(height: 24),
+            ElevatedButton(onPressed: _loadProfile,
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white),
+                child: const Text('Try Again')),
+          ]),
         )));
 
   String _cap(String s) =>
@@ -1150,16 +1264,11 @@ class _ProfilePageState extends State<ProfilePage>
 
   String _fmtDate(String? iso) {
     if (iso == null) return '—';
-    try {
-      return DateFormat('MMMM yyyy')
-          .format(DateTime.parse(iso).toLocal());
-    } catch (_) {
-      return iso;
-    }
+    try { return DateFormat('MMMM yyyy').format(DateTime.parse(iso).toLocal()); }
+    catch (_) { return iso; }
   }
 
-  // Helper widget for tab labels with optional badge
-  Tab _TabLabel(String text, int count) => Tab(
+  Tab _tabLabel(String text, int count) => Tab(
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           Text(text),
           if (count > 0) ...[
@@ -1168,12 +1277,9 @@ class _ProfilePageState extends State<ProfilePage>
               width: 16, height: 16,
               decoration: BoxDecoration(
                   color: AppColors.primary, shape: BoxShape.circle),
-              child: Center(
-                child: Text('$count',
-                    style: const TextStyle(
-                        color: Colors.white, fontSize: 9,
-                        fontWeight: FontWeight.w800)),
-              ),
+              child: Center(child: Text('$count',
+                  style: const TextStyle(color: Colors.white,
+                      fontSize: 9, fontWeight: FontWeight.w800))),
             ),
           ],
         ]),
@@ -1181,53 +1287,48 @@ class _ProfilePageState extends State<ProfilePage>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ORDER LIST — renders a scrollable list for one tab
+// ORDER LIST
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _OrderList extends StatelessWidget {
   final List<Map<String, dynamic>> orders;
-  final void Function(String orderId, String orderNumber) onPayNow;
-  final void Function(Map<String, dynamic> order) onAddToCart;
-  final void Function(String orderId) onCancelOrder;
-  final void Function(String contentId) onReadItem;
-  final void Function(Map<String, dynamic> item) onPayToRead;
+  final Map<String, double>        dlProgress;
+  final void Function(String, String)               onPayNow;
+  final void Function(Map<String, dynamic>)         onAddToCart;
+  final void Function(String)                       onCancelOrder;
+  final void Function(Map<String, dynamic> content) onDownload;
+  final void Function(Map<String, dynamic>)         onPayToRead;
 
   const _OrderList({
     required this.orders,
+    required this.dlProgress,
     required this.onPayNow,
     required this.onAddToCart,
     required this.onCancelOrder,
-    required this.onReadItem,
+    required this.onDownload,
     required this.onPayToRead,
   });
 
   @override
   Widget build(BuildContext context) {
     if (orders.isEmpty) {
-      return Center(
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(Icons.inbox_outlined,
-              size: 48, color: const Color(0xFFD1D5DB)),
-          const SizedBox(height: 12),
-          const Text('Nothing here',
-              style: TextStyle(
-                  fontFamily: 'DM Sans',
-                  fontSize: 14,
-                  color: Color(0xFF9CA3AF))),
-        ]),
-      );
+      return Center(child: Column(
+          mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(Icons.inbox_outlined, size: 48, color: const Color(0xFFD1D5DB)),
+        const SizedBox(height: 12),
+        const Text('Nothing here', style: TextStyle(
+            fontFamily: 'DM Sans', fontSize: 14, color: Color(0xFF9CA3AF))),
+      ]));
     }
     return ListView.separated(
       padding: const EdgeInsets.all(16),
       itemCount: orders.length,
       separatorBuilder: (_, __) => const SizedBox(height: 12),
       itemBuilder: (_, i) => _OrderCard(
-        order: orders[i],
-        onPayNow:      onPayNow,
-        onAddToCart:   onAddToCart,
-        onCancelOrder: onCancelOrder,
-        onReadItem:    onReadItem,
-        onPayToRead:   onPayToRead,
+        order: orders[i], dlProgress: dlProgress,
+        onPayNow: onPayNow, onAddToCart: onAddToCart,
+        onCancelOrder: onCancelOrder, onDownload: onDownload,
+        onPayToRead: onPayToRead,
       ),
     );
   }
@@ -1236,33 +1337,35 @@ class _OrderList extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 // ORDER CARD
 //
-// Collapsed: shows order number, date, total, payment badge.
-// Expanded:  shows each item with a per-item action chip, then an
-//            action row whose contents depend on the order's state:
+// Per-item chip:
+//   Paid  + file_url present  → green  "Download"    → saves file to device
+//   Paid  + file_url absent   → no chip (file not uploaded yet)
+//   Unpaid (not cancelled)    → amber  "Pay to Read" → adds to cart
+//   Cancelled                 → no chip
 //
-//   Unpaid active  → [Pay Now] primary  +  [Add to Cart] + [Cancel]
-//   Paid/complete  → [View Receipt]
-//   Cancelled      → [Re-order] (adds all items back to cart)
+// While downloading:
+//   Chip  → replaced by "Saving…" spinner chip
+//   Below title → indeterminate→determinate progress bar + percentage
 //
-// Per-item chip (expanded):
-//   Paid   → "Read"         (opens content)
-//   Unpaid → "Pay to Read"  (adds that single item to cart → /cart)
+// Order action bar:
+//   Paid      → download hint banner  +  View Receipt
+//   Unpaid    → Pay Now (primary)  +  Add to Cart  +  Cancel
+//   Cancelled → info label  +  Re-order
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _OrderCard extends StatefulWidget {
   final Map<String, dynamic> order;
-  final void Function(String orderId, String orderNumber) onPayNow;
-  final void Function(Map<String, dynamic> order) onAddToCart;
-  final void Function(String orderId) onCancelOrder;
-  final void Function(String contentId) onReadItem;
-  final void Function(Map<String, dynamic> item) onPayToRead;
+  final Map<String, double>  dlProgress;
+  final void Function(String, String)               onPayNow;
+  final void Function(Map<String, dynamic>)         onAddToCart;
+  final void Function(String)                       onCancelOrder;
+  final void Function(Map<String, dynamic> content) onDownload;
+  final void Function(Map<String, dynamic>)         onPayToRead;
 
   const _OrderCard({
-    required this.order,
-    required this.onPayNow,
-    required this.onAddToCart,
-    required this.onCancelOrder,
-    required this.onReadItem,
+    required this.order, required this.dlProgress,
+    required this.onPayNow, required this.onAddToCart,
+    required this.onCancelOrder, required this.onDownload,
     required this.onPayToRead,
   });
 
@@ -1279,7 +1382,6 @@ class _OrderCardState extends State<_OrderCard> {
     final isPaid      = o['payment_status'] == 'paid';
     final isCancelled = o['status'] == 'cancelled';
     final orderNumber = o['order_number'] as String? ?? '—';
-    final status      = o['status']         as String? ?? 'pending';
     final payStatus   = o['payment_status'] as String? ?? 'pending';
     final total       = (o['total_price'] as num?)?.toDouble() ?? 0.0;
     final createdAt   = o['created_at'] as String?;
@@ -1287,117 +1389,95 @@ class _OrderCardState extends State<_OrderCard> {
 
     String dateStr = '—';
     if (createdAt != null) {
-      try {
-        dateStr = DateFormat('d MMM yyyy')
-            .format(DateTime.parse(createdAt).toLocal());
-      } catch (_) {}
+      try { dateStr = DateFormat('d MMM yyyy')
+          .format(DateTime.parse(createdAt).toLocal()); }
+      catch (_) {}
     }
 
-    final statusColor = isPaid
-        ? const Color(0xFF16A34A)
-        : isCancelled
-            ? const Color(0xFF6B7280)
-            : const Color(0xFFD97706);
+    final statusColor = isPaid ? const Color(0xFF16A34A)
+        : isCancelled ? const Color(0xFF6B7280)
+        : const Color(0xFFD97706);
 
     return Container(
       decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          border: isCancelled
-              ? Border.all(color: const Color(0xFFF3F4F6))
-              : null,
-          boxShadow: isCancelled
-              ? null
-              : [
-                  BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2))
-                ]),
+          border: isCancelled ? Border.all(color: const Color(0xFFF3F4F6)) : null,
+          boxShadow: isCancelled ? null : [BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8, offset: const Offset(0, 2))]),
       child: Column(children: [
 
-        // ── Collapsed header ──────────────────────────────────────────────
+        // ── Header ────────────────────────────────────────────────────────
         GestureDetector(
           onTap: () => setState(() => _expanded = !_expanded),
           behavior: HitTestBehavior.opaque,
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Row(children: [
-              // Status icon
               Container(
                 width: 42, height: 42,
                 decoration: BoxDecoration(
                     color: statusColor.withOpacity(0.1),
                     shape: BoxShape.circle),
                 child: Icon(
-                    isPaid
-                        ? Icons.check_circle_outline_rounded
-                        : isCancelled
-                            ? Icons.cancel_outlined
-                            : Icons.access_time_rounded,
+                    isPaid ? Icons.check_circle_outline_rounded
+                        : isCancelled ? Icons.cancel_outlined
+                        : Icons.access_time_rounded,
                     color: statusColor, size: 20),
               ),
               const SizedBox(width: 12),
-
-              // Order number + date
               Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  Text('#$orderNumber',
-                      style: TextStyle(
-                          fontFamily: 'DM Sans',
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: isCancelled
-                              ? const Color(0xFF9CA3AF)
-                              : const Color(0xFF111827))),
+                  Text('#$orderNumber', style: TextStyle(
+                      fontFamily: 'DM Sans', fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: isCancelled
+                          ? const Color(0xFF9CA3AF) : const Color(0xFF111827))),
                   const SizedBox(height: 2),
-                  Text(dateStr,
-                      style: const TextStyle(
-                          fontFamily: 'DM Sans',
-                          fontSize: 11,
-                          color: Color(0xFF9CA3AF))),
+                  Text(dateStr, style: const TextStyle(
+                      fontFamily: 'DM Sans', fontSize: 11,
+                      color: Color(0xFF9CA3AF))),
                 ]),
               ),
-
-              // Total + badge
               Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text('KES ${_fmt(total)}',
-                    style: TextStyle(
-                        fontFamily: 'DM Sans',
-                        fontSize: 14,
-                        fontWeight: FontWeight.w800,
-                        color: isCancelled
-                            ? const Color(0xFF9CA3AF)
-                            : AppColors.primary)),
+                Text('KES ${_fmt(total)}', style: TextStyle(
+                    fontFamily: 'DM Sans', fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: isCancelled
+                        ? const Color(0xFF9CA3AF) : AppColors.primary)),
                 const SizedBox(height: 4),
                 _PayBadge(payStatus, cancelled: isCancelled),
               ]),
-
               const SizedBox(width: 8),
-              Icon(
-                  _expanded
-                      ? Icons.keyboard_arrow_up_rounded
-                      : Icons.keyboard_arrow_down_rounded,
+              Icon(_expanded
+                  ? Icons.keyboard_arrow_up_rounded
+                  : Icons.keyboard_arrow_down_rounded,
                   color: const Color(0xFF9CA3AF)),
             ]),
           ),
         ),
 
-        // ── Expanded: item list + actions ─────────────────────────────────
+        // ── Expanded ──────────────────────────────────────────────────────
         if (_expanded) ...[
           const Divider(height: 1, indent: 16, endIndent: 16),
 
-          // Items
+          // Item rows
           ...items.map<Widget>((rawItem) {
             final item    = rawItem as Map<String, dynamic>;
             final content = (item['content'] as Map<String, dynamic>?) ?? {};
+            final cId     = content['id']              as String? ?? '';
             final title   = content['title']           as String? ?? 'Untitled';
             final imgUrl  = content['cover_image_url'] as String?;
-            final cId     = content['id']              as String? ?? '';
-            final qty     = (item['quantity']   as num?)?.toInt()    ?? 1;
+            final fileUrl = content['file_url']        as String?;
+            final qty     = (item['quantity']  as num?)?.toInt()    ?? 1;
             final price   = (item['unit_price'] as num?)?.toDouble() ?? 0.0;
+
+            final hasFile       = fileUrl != null && fileUrl.isNotEmpty;
+            final isDownloading = cId.isNotEmpty &&
+                widget.dlProgress.containsKey(cId);
+            final progress      = widget.dlProgress[cId] ?? 0.0;
 
             return Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
@@ -1409,62 +1489,79 @@ class _OrderCardState extends State<_OrderCard> {
                   child: SizedBox(
                     width: 46, height: 62,
                     child: imgUrl != null && imgUrl.isNotEmpty
-                        ? CachedNetworkImage(
-                            imageUrl: imgUrl, fit: BoxFit.cover,
+                        ? CachedNetworkImage(imageUrl: imgUrl, fit: BoxFit.cover,
                             errorWidget: (_, __, ___) =>
                                 Container(color: const Color(0xFFE5E7EB)))
-                        : Container(
-                            color: const Color(0xFFE5E7EB),
+                        : Container(color: const Color(0xFFE5E7EB),
                             child: const Icon(Icons.book_outlined,
                                 size: 20, color: Color(0xFF9CA3AF))),
                   ),
                 ),
                 const SizedBox(width: 12),
 
-                // Title + price
+                // Title + price + progress
                 Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                    Text(title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontFamily: 'DM Sans',
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
+                    Text(title, maxLines: 2, overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontFamily: 'DM Sans',
+                            fontSize: 13, fontWeight: FontWeight.w600,
                             color: Color(0xFF111827))),
                     const SizedBox(height: 3),
                     Text('Qty $qty  ·  KES ${_fmt(price)}',
-                        style: const TextStyle(
-                            fontFamily: 'DM Sans',
-                            fontSize: 11,
-                            color: Color(0xFF9CA3AF))),
+                        style: const TextStyle(fontFamily: 'DM Sans',
+                            fontSize: 11, color: Color(0xFF9CA3AF))),
+
+                    // Progress bar (shown only while downloading this item)
+                    if (isDownloading) ...[
+                      const SizedBox(height: 7),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          // null = indeterminate while progress == 0 (preparing)
+                          value: progress == 0.0 ? null : progress,
+                          minHeight: 5,
+                          backgroundColor: const Color(0xFFE5E7EB),
+                          valueColor: AlwaysStoppedAnimation(AppColors.primary),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        progress == 0.0
+                            ? 'Preparing download…'
+                            : '${(progress * 100).toStringAsFixed(0)}%',
+                        style: TextStyle(fontFamily: 'DM Sans',
+                            fontSize: 10, color: AppColors.primary),
+                      ),
+                    ],
                   ]),
                 ),
 
                 const SizedBox(width: 8),
 
-                // ── Per-item action chip ──────────────────────────────────
-                // Paid  → "Read" teal chip  → onReadItem
-                // Unpaid → "Pay to Read" amber chip → onPayToRead
-                //           (cart-add-item for THIS item only, then /cart)
-                if (isPaid && cId.isNotEmpty)
-                  _Chip(
-                    label: 'Read',
-                    icon: Icons.menu_book_rounded,
-                    color: AppColors.primary,
-                    bg: AppColors.primary.withOpacity(0.08),
-                    onTap: () => widget.onReadItem(cId),
-                  )
-                else if (!isPaid && !isCancelled && cId.isNotEmpty)
-                  _Chip(
-                    label: 'Pay to Read',
-                    icon: Icons.shopping_cart_outlined,
-                    color: const Color(0xFFD97706),
-                    bg: const Color(0xFFFFFBEB),
-                    onTap: () => widget.onPayToRead(item),
-                  ),
+                // ── Per-item chip ─────────────────────────────────────────
+                if (cId.isNotEmpty) ...[
+                  if (isPaid && !isCancelled && hasFile)
+                    // Paid and file exists → Download / Saving
+                    isDownloading
+                        ? const _DownloadingChip()
+                        : _Chip(
+                            label: 'Download',
+                            icon: Icons.download_rounded,
+                            color: const Color(0xFF16A34A),
+                            bg: const Color(0xFFF0FDF4),
+                            onTap: () => widget.onDownload(content),
+                          )
+                  else if (!isPaid && !isCancelled)
+                    // Unpaid → Pay to Read (add to cart)
+                    _Chip(
+                      label: 'Pay to Read',
+                      icon: Icons.shopping_cart_outlined,
+                      color: const Color(0xFFD97706),
+                      bg: const Color(0xFFFFFBEB),
+                      onTap: () => widget.onPayToRead(item),
+                    ),
+                ],
               ]),
             );
           }),
@@ -1472,10 +1569,9 @@ class _OrderCardState extends State<_OrderCard> {
           const SizedBox(height: 14),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
-          // ── Action row ───────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: _buildActions(o, isPaid, isCancelled, orderNumber, items),
+            child: _buildActions(o, isPaid, isCancelled, orderNumber),
           ),
         ],
       ]),
@@ -1487,70 +1583,75 @@ class _OrderCardState extends State<_OrderCard> {
     bool isPaid,
     bool isCancelled,
     String orderNumber,
-    List<dynamic> items,
   ) {
     final orderId = order['id'] as String? ?? '';
 
-    // ── Cancelled: Re-order only ──────────────────────────────────────────
+    // Cancelled
     if (isCancelled) {
       return Row(children: [
         const Icon(Icons.info_outline_rounded,
             size: 14, color: Color(0xFF9CA3AF)),
         const SizedBox(width: 6),
-        const Expanded(
-          child: Text('Order was cancelled',
-              style: TextStyle(
-                  fontFamily: 'DM Sans',
-                  fontSize: 12,
-                  color: Color(0xFF9CA3AF))),
-        ),
+        const Expanded(child: Text('Order was cancelled',
+            style: TextStyle(fontFamily: 'DM Sans',
+                fontSize: 12, color: Color(0xFF9CA3AF)))),
         _Chip(
-          label: 'Re-order',
-          icon: Icons.shopping_cart_outlined,
-          color: const Color(0xFF2563EB),
-          bg: const Color(0xFFEFF6FF),
+          label: 'Re-order', icon: Icons.shopping_cart_outlined,
+          color: const Color(0xFF2563EB), bg: const Color(0xFFEFF6FF),
           onTap: () => widget.onAddToCart(order),
         ),
       ]);
     }
 
-    // ── Paid / completed: receipt only ────────────────────────────────────
+    // Paid
     if (isPaid) {
-      return Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-        _Chip(
-          label: 'View Receipt',
-          icon: Icons.receipt_outlined,
-          color: const Color(0xFF6B7280),
-          bg: const Color(0xFFF3F4F6),
-          onTap: () {/* TODO: receipt page */},
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+              color: const Color(0xFFF0FDF4),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFFBBF7D0))),
+          child: Row(children: [
+            const Icon(Icons.download_done_rounded,
+                size: 16, color: Color(0xFF16A34A)),
+            const SizedBox(width: 8),
+            const Expanded(child: Text(
+              'Tap the Download button on each item above '
+              'to save it directly to your device.',
+              style: TextStyle(fontFamily: 'DM Sans', fontSize: 12,
+                  color: Color(0xFF15803D), height: 1.4),
+            )),
+          ]),
         ),
+        const SizedBox(height: 10),
+        Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+          _Chip(
+            label: 'View Receipt', icon: Icons.receipt_outlined,
+            color: const Color(0xFF6B7280), bg: const Color(0xFFF3F4F6),
+            onTap: () {/* TODO: receipt page */},
+          ),
+        ]),
       ]);
     }
 
-    // ── Unpaid active: Pay Now + Add to Cart + Cancel ─────────────────────
+    // Unpaid active
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      // Primary CTA
       SizedBox(
         height: 42,
         child: ElevatedButton.icon(
           onPressed: () => widget.onPayNow(orderId, orderNumber),
           icon: const Icon(Icons.payment_rounded, size: 16),
-          label: const Text('Pay Now',
-              style: TextStyle(
-                  fontFamily: 'DM Sans',
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700)),
+          label: const Text('Pay Now', style: TextStyle(
+              fontFamily: 'DM Sans', fontSize: 13, fontWeight: FontWeight.w700)),
           style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
+              backgroundColor: AppColors.primary, foregroundColor: Colors.white,
               elevation: 0,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10))),
         ),
       ),
       const SizedBox(height: 8),
-
-      // Secondary row: Add to Cart + Cancel
       Row(children: [
         Expanded(
           child: SizedBox(
@@ -1558,11 +1659,9 @@ class _OrderCardState extends State<_OrderCard> {
             child: OutlinedButton.icon(
               onPressed: () => widget.onAddToCart(order),
               icon: const Icon(Icons.shopping_cart_outlined, size: 14),
-              label: const Text('Add to Cart',
-                  style: TextStyle(
-                      fontFamily: 'DM Sans',
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600)),
+              label: const Text('Add to Cart', style: TextStyle(
+                  fontFamily: 'DM Sans', fontSize: 12,
+                  fontWeight: FontWeight.w600)),
               style: OutlinedButton.styleFrom(
                   foregroundColor: const Color(0xFF2563EB),
                   side: const BorderSide(color: Color(0xFF2563EB)),
@@ -1578,11 +1677,9 @@ class _OrderCardState extends State<_OrderCard> {
           child: OutlinedButton.icon(
             onPressed: () => widget.onCancelOrder(orderId),
             icon: const Icon(Icons.close_rounded, size: 14),
-            label: const Text('Cancel',
-                style: TextStyle(
-                    fontFamily: 'DM Sans',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600)),
+            label: const Text('Cancel', style: TextStyle(
+                fontFamily: 'DM Sans', fontSize: 12,
+                fontWeight: FontWeight.w600)),
             style: OutlinedButton.styleFrom(
                 foregroundColor: const Color(0xFFDC2626),
                 side: const BorderSide(color: Color(0xFFDC2626)),
@@ -1592,21 +1689,14 @@ class _OrderCardState extends State<_OrderCard> {
           ),
         ),
       ]),
-
       const SizedBox(height: 6),
-      const Text(
-        '"Add to Cart" lets you review or swap items before paying.',
-        style: TextStyle(
-            fontFamily: 'DM Sans',
-            fontSize: 11,
-            color: Color(0xFF9CA3AF),
-            height: 1.4),
-      ),
+      const Text('"Add to Cart" lets you review or swap items before paying.',
+          style: TextStyle(fontFamily: 'DM Sans', fontSize: 11,
+              color: Color(0xFF9CA3AF), height: 1.4)),
     ]);
   }
 
-  String _fmt(double v) => v
-      .toStringAsFixed(0)
+  String _fmt(double v) => v.toStringAsFixed(0)
       .replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
 }
 
@@ -1619,17 +1709,11 @@ class _Card extends StatelessWidget {
   const _Card({required this.child});
   @override
   Widget build(BuildContext context) => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(20),
+        width: double.infinity, padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withOpacity(0.04),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2))
-            ]),
+            color: Colors.white, borderRadius: BorderRadius.circular(16),
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04),
+                blurRadius: 8, offset: const Offset(0, 2))]),
         child: child);
 }
 
@@ -1639,47 +1723,34 @@ class _SectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: Text(text,
-            style: const TextStyle(
-                fontFamily: 'PlayfairDisplay',
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF6B7280),
-                letterSpacing: 0.5)));
+        child: Text(text, style: const TextStyle(
+            fontFamily: 'PlayfairDisplay', fontSize: 14,
+            fontWeight: FontWeight.w700, color: Color(0xFF6B7280),
+            letterSpacing: 0.5)));
 }
 
 class _ReadOnly extends StatelessWidget {
   final String label, value;
   final IconData icon;
-  const _ReadOnly(
-      {required this.label, required this.value, required this.icon});
+  const _ReadOnly({required this.label, required this.value, required this.icon});
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-            color: const Color(0xFFF9FAFB),
+        decoration: BoxDecoration(color: const Color(0xFFF9FAFB),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: const Color(0xFFF3F4F6))),
         child: Row(children: [
           Icon(icon, size: 18, color: const Color(0xFF9CA3AF)),
           const SizedBox(width: 10),
-          Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text(label,
-                    style: const TextStyle(
-                        fontFamily: 'DM Sans',
-                        fontSize: 11,
-                        color: Color(0xFF9CA3AF))),
-                const SizedBox(height: 2),
-                Text(value,
-                    style: const TextStyle(
-                        fontFamily: 'DM Sans',
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF374151))),
-              ])),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+            Text(label, style: const TextStyle(fontFamily: 'DM Sans',
+                fontSize: 11, color: Color(0xFF9CA3AF))),
+            const SizedBox(height: 2),
+            Text(value, style: const TextStyle(fontFamily: 'DM Sans',
+                fontSize: 14, fontWeight: FontWeight.w600,
+                color: Color(0xFF374151))),
+          ])),
           const Icon(Icons.lock_outline_rounded,
               size: 14, color: Color(0xFFD1D5DB)),
         ]));
@@ -1705,16 +1776,11 @@ class _RoleBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        decoration: BoxDecoration(
-            color: _color.withOpacity(0.1),
+        decoration: BoxDecoration(color: _color.withOpacity(0.1),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: _color.withOpacity(0.25))),
-        child: Text(_label,
-            style: TextStyle(
-                fontFamily: 'DM Sans',
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: _color)));
+        child: Text(_label, style: TextStyle(fontFamily: 'DM Sans',
+            fontSize: 10, fontWeight: FontWeight.w700, color: _color)));
 }
 
 class _PayBadge extends StatelessWidget {
@@ -1730,79 +1796,51 @@ class _PayBadge extends StatelessWidget {
             'failed' => (const Color(0xFFDC2626), const Color(0xFFFEF2F2)),
             _        => (const Color(0xFFD97706), const Color(0xFFFFFBEB)),
           };
-    final label = cancelled
-        ? 'Cancelled'
-        : status == 'paid'
-            ? 'Paid'
-            : status[0].toUpperCase() + status.substring(1);
+    final label = cancelled ? 'Cancelled'
+        : status == 'paid' ? 'Paid'
+        : status[0].toUpperCase() + status.substring(1);
     return Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-            color: bg, borderRadius: BorderRadius.circular(8)),
-        child: Text(label,
-            style: TextStyle(
-                fontFamily: 'DM Sans',
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: color)));
+        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(8)),
+        child: Text(label, style: TextStyle(fontFamily: 'DM Sans',
+            fontSize: 10, fontWeight: FontWeight.w700, color: color)));
   }
 }
 
 class _QuickCard extends StatelessWidget {
   final IconData icon;
-  final String label;
-  final String? count;
-  final Color color, bg;
+  final String   label;
+  final String?  count;
+  final Color    color, bg;
   final VoidCallback onTap;
-  const _QuickCard(
-      {required this.icon,
-      required this.label,
-      required this.color,
-      required this.bg,
-      required this.onTap,
-      this.count});
+  const _QuickCard({required this.icon, required this.label,
+      required this.color, required this.bg, required this.onTap, this.count});
   @override
   Widget build(BuildContext context) => Expanded(
         child: GestureDetector(
           onTap: onTap,
           child: Container(
             padding: const EdgeInsets.symmetric(vertical: 14),
-            decoration: BoxDecoration(
-                color: Colors.white,
+            decoration: BoxDecoration(color: Colors.white,
                 borderRadius: BorderRadius.circular(14),
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.black.withOpacity(0.04),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2))
-                ]),
+                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04),
+                    blurRadius: 8, offset: const Offset(0, 2))]),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               Stack(alignment: Alignment.topRight, children: [
-                Container(
-                    width: 42, height: 42,
-                    decoration:
-                        BoxDecoration(color: bg, shape: BoxShape.circle),
+                Container(width: 42, height: 42,
+                    decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
                     child: Icon(icon, color: color, size: 20)),
                 if (count != null)
-                  Container(
-                      width: 16, height: 16,
-                      decoration: BoxDecoration(
-                          color: color, shape: BoxShape.circle),
-                      child: Center(
-                          child: Text(count!,
-                              style: const TextStyle(
-                                  fontFamily: 'DM Sans',
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white)))),
+                  Container(width: 16, height: 16,
+                      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                      child: Center(child: Text(count!, style: const TextStyle(
+                          fontFamily: 'DM Sans', fontSize: 9,
+                          fontWeight: FontWeight.w700, color: Colors.white)))),
               ]),
               const SizedBox(height: 8),
-              Text(label,
-                  style: const TextStyle(
-                      fontFamily: 'DM Sans',
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF374151))),
+              Text(label, style: const TextStyle(fontFamily: 'DM Sans',
+                  fontSize: 11, fontWeight: FontWeight.w600,
+                  color: Color(0xFF374151))),
             ]),
           ),
         ),
@@ -1814,12 +1852,8 @@ class _TypeChip extends StatelessWidget {
   final IconData icon;
   final bool selected, enabled;
   final VoidCallback onTap;
-  const _TypeChip(
-      {required this.label,
-      required this.icon,
-      required this.selected,
-      required this.enabled,
-      required this.onTap});
+  const _TypeChip({required this.label, required this.icon,
+      required this.selected, required this.enabled, required this.onTap});
   @override
   Widget build(BuildContext context) => Expanded(
         child: GestureDetector(
@@ -1832,26 +1866,16 @@ class _TypeChip extends StatelessWidget {
                     ? AppColors.primary.withOpacity(0.08)
                     : const Color(0xFFF9FAFB),
                 border: Border.all(
-                    color: selected
-                        ? AppColors.primary
-                        : const Color(0xFFE5E7EB),
+                    color: selected ? AppColors.primary : const Color(0xFFE5E7EB),
                     width: selected ? 2 : 1),
                 borderRadius: BorderRadius.circular(10)),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Icon(icon,
-                  size: 18,
-                  color: selected
-                      ? AppColors.primary
-                      : const Color(0xFFD1D5DB)),
+              Icon(icon, size: 18,
+                  color: selected ? AppColors.primary : const Color(0xFFD1D5DB)),
               const SizedBox(height: 4),
-              Text(label,
-                  style: TextStyle(
-                      fontFamily: 'DM Sans',
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: selected
-                          ? AppColors.primary
-                          : const Color(0xFF9CA3AF))),
+              Text(label, style: TextStyle(fontFamily: 'DM Sans', fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? AppColors.primary : const Color(0xFF9CA3AF))),
             ]),
           ),
         ),
@@ -1863,29 +1887,45 @@ class _Chip extends StatelessWidget {
   final IconData icon;
   final Color color, bg;
   final VoidCallback onTap;
-  const _Chip(
-      {required this.label,
-      required this.icon,
-      required this.color,
-      required this.bg,
-      required this.onTap});
+  const _Chip({required this.label, required this.icon,
+      required this.color, required this.bg, required this.onTap});
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-              color: bg, borderRadius: BorderRadius.circular(8)),
+          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(8)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(icon, size: 13, color: color),
             const SizedBox(width: 4),
-            Text(label,
-                style: TextStyle(
-                    fontFamily: 'DM Sans',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: color)),
+            Text(label, style: TextStyle(fontFamily: 'DM Sans', fontSize: 12,
+                fontWeight: FontWeight.w700, color: color)),
           ]),
         ),
+      );
+}
+
+/// Spinner chip displayed while a file is being saved to the device.
+class _DownloadingChip extends StatelessWidget {
+  const _DownloadingChip();
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+            color: const Color(0xFFF0FDF4),
+            borderRadius: BorderRadius.circular(8)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          SizedBox(
+            width: 11, height: 11,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.8,
+              valueColor: AlwaysStoppedAnimation(const Color(0xFF16A34A)),
+            ),
+          ),
+          const SizedBox(width: 5),
+          const Text('Saving…', style: TextStyle(
+              fontFamily: 'DM Sans', fontSize: 12,
+              fontWeight: FontWeight.w700, color: Color(0xFF16A34A))),
+        ]),
       );
 }
