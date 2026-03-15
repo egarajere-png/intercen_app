@@ -1,6 +1,4 @@
 // lib/main.dart
-// All imports use your ACTUAL existing file paths.
-// No separate main_router.dart needed — routes are all here.
 
 import 'dart:async';
 
@@ -15,7 +13,7 @@ import 'package:app_links/app_links.dart';
 import 'pages/homepage.dart';
 import 'pages/books.dart';
 import 'pages/book_detail_page.dart';
-import 'pages/splashscreen.dart';        // ← your OnboardingPage lives here
+import 'pages/splashscreen.dart';
 import 'pages/cart.dart';
 import 'pages/checkout_page.dart';
 
@@ -29,20 +27,21 @@ import 'pages/auth/confirm_passpage.dart';
 // ── Feature pages ─────────────────────────────────────────────────────────────
 import 'pages/profile_page.dart';
 import 'pages/profile_setup_page.dart';
-import 'pages/settingsPage.dart';          // ← your actual filename
+import 'pages/settingsPage.dart';
 import 'pages/content_management_page.dart';
 import 'pages/content_reader_page.dart';
 import 'pages/publish_with_us.dart';
 import 'pages/about_page.dart';
+import 'pages/notifications_page.dart';
+import 'pages/publication_requests_page.dart';
 
 // ── Role dashboards ───────────────────────────────────────────────────────────
 import 'pages/dashboard/admin_dashboard.dart';
 import 'pages/dashboard/author_dashboard.dart';
 import 'pages/dashboard/reader_dashboard.dart';
 
-// ── Role service ──────────────────────────────────────────────────────────────
+// ── Services & theme ──────────────────────────────────────────────────────────
 import 'services/role_service.dart';
-
 import 'theme/app_colors.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -129,8 +128,9 @@ Future<void> main() async {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ROLE GATE
-// Resolves role then pushes the correct dashboard.
-// Shown as home when a session already exists.
+//
+// Loads and caches the user's role, then ALWAYS navigates to /home.
+// Dashboards are never used as the root page — reachable from Settings only.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _RoleGate extends StatefulWidget {
@@ -147,43 +147,40 @@ class _RoleGateState extends State<_RoleGate> {
   }
 
   Future<void> _resolve() async {
-    final role = await RoleService.instance.load();
+    await RoleService.instance.load();
     if (!mounted) return;
-    Navigator.pushReplacementNamed(
-        context, RoleService.dashboardForRole(role));
+    Navigator.pushReplacementNamed(context, '/home');
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF9F5EF),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Image.asset(
-              'lib/assets/intercenlogo.png',
-              height: 56,
-              errorBuilder: (_, __, ___) => const Icon(
-                  Icons.menu_book_rounded,
-                  size: 56,
-                  color: Color(0xFFB11226)),
-            ),
-            const SizedBox(height: 24),
-            const SizedBox(
-              width: 28,
-              height: 28,
-              child: CircularProgressIndicator(
-                strokeWidth: 3,
-                valueColor:
-                    AlwaysStoppedAnimation(Color(0xFFB11226)),
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: const Color(0xFFF9F5EF),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Image.asset(
+                'lib/assets/intercenlogo.png',
+                height: 56,
+                errorBuilder: (_, __, ___) => const Icon(
+                    Icons.menu_book_rounded,
+                    size: 56,
+                    color: Color(0xFFB11226)),
               ),
-            ),
-          ],
+              const SizedBox(height: 24),
+              const SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(
+                  strokeWidth: 3,
+                  valueColor:
+                      AlwaysStoppedAnimation(Color(0xFFB11226)),
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
-  }
+      );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -229,16 +226,13 @@ class _IntercenAppState extends State<IntercenApp> {
             bodyColor: Colors.black, displayColor: Colors.black),
       ),
 
-      // ── Entry: if session exists load role → correct dashboard
-      //           otherwise show onboarding
+      // ── Entry: session exists → /home, else → onboarding ─────────────────
       home: StreamBuilder<AuthState>(
         stream: Supabase.instance.client.auth.onAuthStateChange,
         builder: (context, snapshot) {
           final session =
               Supabase.instance.client.auth.currentSession;
-          if (session != null) {
-            return const _RoleGate();
-          }
+          if (session != null) return const _RoleGate();
           RoleService.instance.clear();
           return const OnboardingPage();
         },
@@ -253,50 +247,69 @@ class _IntercenAppState extends State<IntercenApp> {
         '/otp':              (_) => const OtpPage(),
         '/confirm-password': (_) => const ConfirmPasswordPage(),
 
-        // ── Role dashboards ───────────────────────────────────────────────
-        '/dashboard/admin':  (_) =>
-          AuthGuard(child: AdminDashboardPage()),
-        '/dashboard/author': (_) =>
-          AuthGuard(child: AuthorDashboardPage()),
-        '/dashboard/reader': (_) =>
-          AuthGuard(child: ReaderDashboardPage()),
-
-        // ── Legacy /home (kept for back-compat) ──────────────────────────
+        // ── Home (Shell) — canonical root after login ─────────────────────
+        // Shell owns Home/Books in-place and routes Cart+Profile away via
+        // pushNamed so Back always returns here with the correct nav.
         '/home': (_) => const AuthGuard(child: Shell()),
+
+        // ── Role dashboards ───────────────────────────────────────────────
+        // Reachable from Settings → "My Dashboard" tile (pushNamed).
+        // All three accept an optional {'initialTab': int} argument so
+        // Settings can deep-link to a specific tab:
+        //   Admin  → tab 0 = Users | 1 = Submissions | 2 = Content
+        //             3 = Orders   | 4 = My Profile
+        //   Author → tab 0 = Overview | 1 = Submissions | 2 = My Works
+        //             3 = My Orders   | 4 = Edit Profile
+        //   Reader → tab 0 = My Profile | 1 = Orders | 2 = Browse
+        '/dashboard/admin':  (_) =>
+            const AuthGuard(child: AdminDashboardPage()),
+        '/dashboard/author': (_) =>
+            const AuthGuard(child: AuthorDashboardPage()),
+        '/dashboard/reader': (_) =>
+            const AuthGuard(child: ReaderDashboardPage()),
 
         // ── Books ─────────────────────────────────────────────────────────
         '/books':       (_) => const AuthGuard(child: BooksPage()),
         '/book-detail': (_) => const AuthGuard(child: BookDetailPage()),
 
-        // ── Cart ──────────────────────────────────────────────────────────
+        // ── Cart & checkout ───────────────────────────────────────────────
         '/cart':     (_) => const AuthGuard(child: CartPage()),
         '/checkout': (_) => AuthGuard(child: CheckoutFlowPage()),
 
         // ── About ─────────────────────────────────────────────────────────
-        '/about': (_) => AboutPage(),
+        '/about': (_) => const AboutPage(),
 
         // ── Profile / Settings ────────────────────────────────────────────
-        '/profile':       (_) => const AuthGuard(child: ProfilePage()),
+        // Both routes point to SettingsPage so pushNamed('/profile') from
+        // any page always lands in the right place with the right navbar.
+        '/profile':       (_) => const AuthGuard(child: SettingsPage()),
+        '/settings':      (_) => const AuthGuard(child: SettingsPage()),
         '/profile-setup': (_) =>
             const AuthGuard(child: ProfileSetupPage()),
-        '/settings': (_) => const AuthGuard(child: SettingsPage()),
+
+        // ── Notifications — standalone page reading notifications table ────
+        '/notifications': (_) =>
+            const AuthGuard(child: NotificationsPage()),
+
+        // ── Publication Requests — admin-only page ────────────────────────
+        // Full approve/reject/review workflow matching the TSX page.
+        '/publication-requests': (_) =>
+            const AuthGuard(child: PublicationRequestsPage()),
 
         // ── Publishing (public — shown on onboarding too) ─────────────────
-        '/publish': (_) => PublishWithUsPage(),
+        '/publish': (_) => const PublishWithUsPage(),
 
         // ── Content management ────────────────────────────────────────────
         '/content-management': (_) =>
             const AuthGuard(child: ContentManagementPage()),
       },
 
-      // ── Dynamic routes ─────────────────────────────────────────────────
+      // ── Dynamic / parameterised routes ───────────────────────────────────
       onGenerateRoute: (settings) {
         final name = settings.name ?? '';
 
-        // /checkout/payment/<orderId>
-        final checkoutMatch =
-            RegExp(r'^/checkout/payment/?(.*)$').firstMatch(name);
-        if (checkoutMatch != null || name == '/checkout/payment') {
+        // /checkout/payment  or  /checkout/payment/<orderId>
+        if (RegExp(r'^/checkout/payment').hasMatch(name)) {
           final args = settings.arguments;
           String orderId = '';
           if (args is Map<String, dynamic>) {
@@ -363,6 +376,17 @@ class _IntercenAppState extends State<IntercenApp> {
           );
         }
 
+        // /content/update/<id>
+        final contentUpdateMatch =
+            RegExp(r'^/content/update/(.+)$').firstMatch(name);
+        if (contentUpdateMatch != null) {
+          return MaterialPageRoute(
+            settings: settings,
+            builder: (_) =>
+                const AuthGuard(child: ContentManagementPage()),
+          );
+        }
+
         // /book-detail/<id>
         final bookMatch =
             RegExp(r'^/book-detail/(.+)$').firstMatch(name);
@@ -370,12 +394,11 @@ class _IntercenAppState extends State<IntercenApp> {
           final bookId = bookMatch.group(1) ?? '';
           return MaterialPageRoute(
             settings: RouteSettings(name: name, arguments: bookId),
-            builder: (_) =>
-                const AuthGuard(child: BookDetailPage()),
+            builder: (_) => const AuthGuard(child: BookDetailPage()),
           );
         }
 
-        // 404
+        // 404 fallback
         return MaterialPageRoute(
           builder: (_) => Scaffold(
             backgroundColor: const Color(0xFFF9F5EF),
@@ -418,7 +441,7 @@ class _IntercenAppState extends State<IntercenApp> {
                       builder: (ctx) => ElevatedButton(
                         onPressed: () =>
                             Navigator.pushNamedAndRemoveUntil(
-                                ctx, '/dashboard/reader', (_) => false),
+                                ctx, '/home', (_) => false),
                         style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primary,
                             foregroundColor: Colors.white,
@@ -426,7 +449,8 @@ class _IntercenAppState extends State<IntercenApp> {
                                 borderRadius:
                                     BorderRadius.circular(12))),
                         child: const Text('Go to Home',
-                            style: TextStyle(fontFamily: 'DM Sans')),
+                            style:
+                                TextStyle(fontFamily: 'DM Sans')),
                       ),
                     ),
                   ],
@@ -469,7 +493,11 @@ class AuthGuard extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SHELL — legacy bottom-nav scaffold
+// SHELL — canonical root page after login
+//
+// Manages Home (index 0) and Books (index 1) in-place.
+// Cart and Profile navigate away via pushNamed so their own Scaffolds
+// handle their navbars — Back always returns here with the correct nav.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class Shell extends StatefulWidget {
@@ -479,12 +507,126 @@ class Shell extends StatefulWidget {
 }
 
 class _ShellState extends State<Shell> {
-  int index = 0;
-  final pages = const [HomePage(), BooksPage(), Placeholder()];
+  int _index = 0;
+
+  static const _pages = <Widget>[
+    HomePage(),
+    BooksPage(),
+  ];
 
   @override
-  Widget build(BuildContext context) =>
-      Scaffold(body: SafeArea(child: pages[index]));
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: _pages[_index],
+      bottomNavigationBar: _AppBottomNav(
+        currentIndex: _index,
+        onHome:    () => setState(() => _index = 0),
+        onBooks:   () => setState(() => _index = 1),
+        onCart:    () => Navigator.pushNamed(context, '/cart'),
+        onProfile: () => Navigator.pushNamed(context, '/settings'),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED BOTTOM NAV (Shell only)
+// Every other page (BooksPage, CartPage, SettingsPage, etc.) defines its
+// own inline nav — this widget is exclusively for Shell.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _AppBottomNav extends StatelessWidget {
+  final int currentIndex;
+  final VoidCallback onHome, onBooks, onCart, onProfile;
+
+  const _AppBottomNav({
+    required this.currentIndex,
+    required this.onHome,
+    required this.onBooks,
+    required this.onCart,
+    required this.onProfile,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 64,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: const Border(
+            top: BorderSide(color: Color(0xFFE5E7EB))),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _NavItem(
+              icon: Icons.home_outlined,
+              label: 'Home',
+              active: currentIndex == 0,
+              onTap: onHome),
+          _NavItem(
+              icon: Icons.menu_book_outlined,
+              label: 'Books',
+              active: currentIndex == 1,
+              onTap: onBooks),
+          _NavItem(
+              icon: Icons.shopping_cart_outlined,
+              label: 'Cart',
+              active: false,
+              onTap: onCart),
+          _NavItem(
+              icon: Icons.person_outline,
+              label: 'Profile',
+              active: false,
+              onTap: onProfile),
+        ],
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? const Color(0xFFB11226) : Colors.grey;
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(height: 3),
+          Text(label,
+              style: TextStyle(
+                fontFamily: 'DM Sans',
+                fontSize: 11,
+                color: color,
+                fontWeight:
+                    active ? FontWeight.w700 : FontWeight.normal,
+              )),
+        ],
+      ),
+    );
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -542,8 +684,8 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
     final ok  = await launchUrl(uri,
         mode: LaunchMode.externalApplication);
     if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Could not open payment page.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open payment page.')));
       return;
     }
     if (mounted) setState(() { _launched = true; _polling = true; });
@@ -611,18 +753,21 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Paystack Payment',
-                style: TextStyle(fontSize: 17,
+                style: TextStyle(
+                    fontSize: 17,
                     fontWeight: FontWeight.w700,
                     color: Color(0xFF1A1A2E))),
             Text('Complete payment in your browser',
-                style: TextStyle(fontSize: 11,
+                style: TextStyle(
+                    fontSize: 11,
                     color: Color(0xFF6B7280),
                     fontWeight: FontWeight.w400)),
           ],
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
-          child: Container(height: 1, color: const Color(0xFFE5E7EB)),
+          child: Container(
+              height: 1, color: const Color(0xFFE5E7EB)),
         ),
       ),
       body: Padding(
@@ -633,15 +778,16 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
             Container(
               width: 90, height: 90,
               decoration: const BoxDecoration(
-                  color: Color(0xFFEFF6FF), shape: BoxShape.circle),
+                  color: Color(0xFFEFF6FF),
+                  shape: BoxShape.circle),
               child: const Icon(Icons.open_in_browser_rounded,
                   size: 44, color: Color(0xFF2563EB)),
             ),
             const SizedBox(height: 28),
-
             if (!_timedOut) ...[
               const Text('Payment Page Opened',
-                  style: TextStyle(fontSize: 22,
+                  style: TextStyle(
+                      fontSize: 22,
                       fontWeight: FontWeight.w800,
                       color: Color(0xFF111827))),
               const SizedBox(height: 12),
@@ -650,8 +796,10 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
                 'This screen will automatically update once your '
                 'payment is confirmed.',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14,
-                    color: Color(0xFF6B7280), height: 1.65),
+                style: TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF6B7280),
+                    height: 1.65),
               ),
               const SizedBox(height: 32),
               if (_polling)
@@ -664,21 +812,23 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
                           color: const Color(0xFFBBF7D0)),
                       borderRadius: BorderRadius.circular(12)),
                   child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                    SizedBox(
-                      width: 16, height: 16,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation(
-                              Color(0xFF16A34A))),
-                    ),
-                    SizedBox(width: 12),
-                    Text('Waiting for payment confirmation…',
-                        style: TextStyle(fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF15803D))),
-                  ]),
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 16, height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation(
+                                Color(0xFF16A34A))),
+                      ),
+                      SizedBox(width: 12),
+                      Text('Waiting for payment confirmation…',
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF15803D))),
+                    ],
+                  ),
                 ),
               const SizedBox(height: 24),
               OutlinedButton.icon(
@@ -694,7 +844,8 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
                     padding: const EdgeInsets.symmetric(
                         horizontal: 24, vertical: 12),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10))),
+                        borderRadius:
+                            BorderRadius.circular(10))),
               ),
               const SizedBox(height: 16),
               TextButton.icon(
@@ -707,7 +858,8 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
               ),
             ] else ...[
               const Text('Payment Not Confirmed',
-                  style: TextStyle(fontSize: 22,
+                  style: TextStyle(
+                      fontSize: 22,
                       fontWeight: FontWeight.w800,
                       color: Color(0xFF111827))),
               const SizedBox(height: 12),
@@ -716,8 +868,10 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
                 "If you completed the payment it may still be "
                 "processing.",
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14,
-                    color: Color(0xFF6B7280), height: 1.65),
+                style: TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF6B7280),
+                    height: 1.65),
               ),
               const SizedBox(height: 32),
               SizedBox(
@@ -768,8 +922,8 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
               TextButton(
                 onPressed: () => Navigator.pop(context),
                 child: const Text('Go Back',
-                    style:
-                        TextStyle(color: Color(0xFF6B7280))),
+                    style: TextStyle(
+                        color: Color(0xFF6B7280))),
               ),
             ],
           ],
@@ -818,15 +972,18 @@ class PaymentSuccessPage extends StatelessWidget {
               ),
               const SizedBox(height: 28),
               const Text('Payment Successful!',
-                  style: TextStyle(fontSize: 26,
+                  style: TextStyle(
+                      fontSize: 26,
                       fontWeight: FontWeight.w900,
                       color: Color(0xFF111827))),
               const SizedBox(height: 12),
               const Text(
                 'Your order has been placed and your payment confirmed.',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14,
-                    color: Color(0xFF6B7280), height: 1.6),
+                style: TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF6B7280),
+                    height: 1.6),
               ),
               const SizedBox(height: 32),
               Container(
@@ -861,10 +1018,11 @@ class PaymentSuccessPage extends StatelessWidget {
                   onPressed: () =>
                       Navigator.pushNamedAndRemoveUntil(
                           context, '/books', (_) => false),
-                  icon: const Icon(Icons.shopping_bag_outlined,
-                      size: 20),
+                  icon: const Icon(
+                      Icons.shopping_bag_outlined, size: 20),
                   label: const Text('Continue Shopping',
-                      style: TextStyle(fontSize: 16,
+                      style: TextStyle(
+                          fontSize: 16,
                           fontWeight: FontWeight.w700)),
                   style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
@@ -879,7 +1037,8 @@ class PaymentSuccessPage extends StatelessWidget {
                 onPressed: () =>
                     Navigator.pushNamed(context, '/orders'),
                 child: const Text('View Order Details',
-                    style: TextStyle(color: Color(0xFF6B7280),
+                    style: TextStyle(
+                        color: Color(0xFF6B7280),
                         fontWeight: FontWeight.w600)),
               ),
             ],
@@ -948,7 +1107,8 @@ class PaymentFailurePage extends StatelessWidget {
               ),
               const SizedBox(height: 28),
               const Text('Payment Failed',
-                  style: TextStyle(fontSize: 26,
+                  style: TextStyle(
+                      fontSize: 26,
                       fontWeight: FontWeight.w900,
                       color: Color(0xFF111827))),
               const SizedBox(height: 12),
@@ -956,8 +1116,10 @@ class PaymentFailurePage extends StatelessWidget {
                 'Something went wrong while processing your payment.\n'
                 'No charges were made to your account.',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14,
-                    color: Color(0xFF6B7280), height: 1.6),
+                style: TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF6B7280),
+                    height: 1.6),
               ),
               const SizedBox(height: 32),
               Container(
@@ -969,22 +1131,23 @@ class PaymentFailurePage extends StatelessWidget {
                         color: const Color(0xFFFECACA)),
                     borderRadius: BorderRadius.circular(12)),
                 child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  Icon(Icons.error_outline_rounded,
-                      color: AppColors.primary, size: 20),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text(
-                      'Please try again or choose a different '
-                      'payment method.',
-                      style: TextStyle(
-                          color: Color(0xFF991B1B),
-                          fontSize: 13,
-                          height: 1.4),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.error_outline_rounded,
+                        color: AppColors.primary, size: 20),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Please try again or choose a different '
+                        'payment method.',
+                        style: TextStyle(
+                            color: Color(0xFF991B1B),
+                            fontSize: 13,
+                            height: 1.4),
+                      ),
                     ),
-                  ),
-                ]),
+                  ],
+                ),
               ),
               const SizedBox(height: 32),
               SizedBox(
@@ -996,9 +1159,11 @@ class PaymentFailurePage extends StatelessWidget {
                           '/checkout/payment',
                           (_) => false,
                           arguments: {'order_id': orderId}),
-                  icon: const Icon(Icons.refresh_rounded, size: 20),
+                  icon: const Icon(Icons.refresh_rounded,
+                      size: 20),
                   label: const Text('Retry Payment',
-                      style: TextStyle(fontSize: 16,
+                      style: TextStyle(
+                          fontSize: 16,
                           fontWeight: FontWeight.w700)),
                   style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
@@ -1012,9 +1177,10 @@ class PaymentFailurePage extends StatelessWidget {
               TextButton(
                 onPressed: () =>
                     Navigator.pushNamedAndRemoveUntil(
-                        context, '/dashboard/reader', (_) => false),
+                        context, '/home', (_) => false),
                 child: const Text('Back to Home',
-                    style: TextStyle(color: Color(0xFF6B7280),
+                    style: TextStyle(
+                        color: Color(0xFF6B7280),
                         fontWeight: FontWeight.w600)),
               ),
             ],
@@ -1045,13 +1211,13 @@ class _CpOrderItem {
   factory _CpOrderItem.fromJson(Map<String, dynamic> j) {
     final c = (j['content'] as Map<String, dynamic>?) ?? {};
     return _CpOrderItem(
-      id:            j['id']              as String? ?? '',
-      contentId:     j['content_id']      as String? ?? '',
-      quantity:      (j['quantity']       as num?)?.toInt()    ?? 1,
-      unitPrice:     (j['unit_price']     as num?)?.toDouble() ?? 0,
-      totalPrice:    (j['total_price']    as num?)?.toDouble() ?? 0,
-      title:         c['title']           as String? ?? 'Unknown',
-      author:        c['author']          as String? ?? '',
+      id:            j['id']           as String? ?? '',
+      contentId:     j['content_id']   as String? ?? '',
+      quantity:      (j['quantity']    as num?)?.toInt()    ?? 1,
+      unitPrice:     (j['unit_price']  as num?)?.toDouble() ?? 0,
+      totalPrice:    (j['total_price'] as num?)?.toDouble() ?? 0,
+      title:         c['title']        as String? ?? 'Unknown',
+      author:        c['author']       as String? ?? '',
       coverImageUrl: c['cover_image_url'] as String?,
     );
   }
@@ -1086,8 +1252,10 @@ class _CpOrder {
       paymentStatus:   j['payment_status']   as String? ?? 'pending',
       shippingAddress: j['shipping_address'] as String? ?? '',
       createdAt:       j['created_at']       as String? ?? '',
-      items: raw.map((e) =>
-          _CpOrderItem.fromJson(e as Map<String, dynamic>)).toList(),
+      items: raw
+          .map((e) =>
+              _CpOrderItem.fromJson(e as Map<String, dynamic>))
+          .toList(),
     );
   }
 }
@@ -1233,8 +1401,8 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
 
   void _startPoll() {
     _stopPoll();
-    _pollTimer =
-        Timer.periodic(const Duration(seconds: 4), (_) async {
+    _pollTimer = Timer.periodic(
+        const Duration(seconds: 4), (_) async {
       try {
         final d = await _sb
             .from('orders')
@@ -1327,18 +1495,21 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
           onPressed: () => Navigator.pop(context),
         ),
         title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-          const Text('Complete Payment',
-              style: TextStyle(fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF1A1A2E))),
-          if (_order != null)
-            Text('Order #${_order!.orderNumber}',
-                style: const TextStyle(fontSize: 12,
-                    color: Color(0xFF6B7280),
-                    fontWeight: FontWeight.w400)),
-        ]),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Complete Payment',
+                style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF1A1A2E))),
+            if (_order != null)
+              Text('Order #${_order!.orderNumber}',
+                  style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF6B7280),
+                      fontWeight: FontWeight.w400)),
+          ],
+        ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(
@@ -1358,303 +1529,345 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
             ? const Color(0xFFD97706)
             : const Color(0xFFDC2626);
     return _Card(
-        child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-      _H(Icons.inventory_2_outlined, 'Order Details'),
-      const SizedBox(height: 16),
-      _KV('Order Number', o.orderNumber, mono: true),
-      _KV('Date', ds),
-      _KV('Status', _cap(o.status)),
-      _KV('Payment', _cap(o.paymentStatus), vc: sc),
-    ]));
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _H(Icons.inventory_2_outlined, 'Order Details'),
+          const SizedBox(height: 16),
+          _KV('Order Number', o.orderNumber, mono: true),
+          _KV('Date', ds),
+          _KV('Status', _cap(o.status)),
+          _KV('Payment', _cap(o.paymentStatus), vc: sc),
+        ],
+      ),
+    );
   }
 
   Widget _orderItemsCard() => _Card(
         padding: EdgeInsets.zero,
         child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
-            child: _H(Icons.menu_book_rounded, 'Order Items'),
-          ),
-          ..._order!.items.asMap().entries.map((e) =>
-              Column(children: [
-                if (e.key > 0)
-                  const Divider(
-                      height: 1, indent: 20, endIndent: 20),
-                _itemRow(e.value),
-              ])),
-          const SizedBox(height: 8),
-        ]),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
+              child:
+                  _H(Icons.menu_book_rounded, 'Order Items'),
+            ),
+            ..._order!.items.asMap().entries.map((e) =>
+                Column(children: [
+                  if (e.key > 0)
+                    const Divider(
+                        height: 1, indent: 20, endIndent: 20),
+                  _itemRow(e.value),
+                ])),
+            const SizedBox(height: 8),
+          ],
+        ),
       );
 
   Widget _itemRow(_CpOrderItem item) => Padding(
         padding: const EdgeInsets.symmetric(
             horizontal: 20, vertical: 14),
         child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: SizedBox(
-              width: 54, height: 74,
-              child: CachedNetworkImage(
-                imageUrl: item.coverImageUrl ?? '',
-                fit: BoxFit.cover,
-                placeholder: (_, __) => Container(
-                    color: const Color(0xFFE5E7EB),
-                    child: const Icon(Icons.book_outlined,
-                        color: Color(0xFF9CA3AF))),
-                errorWidget: (_, __, ___) => Container(
-                    color: const Color(0xFFE5E7EB),
-                    child: const Icon(Icons.book_outlined,
-                        color: Color(0xFF9CA3AF))),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: SizedBox(
+                width: 54, height: 74,
+                child: CachedNetworkImage(
+                  imageUrl: item.coverImageUrl ?? '',
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => Container(
+                      color: const Color(0xFFE5E7EB),
+                      child: const Icon(Icons.book_outlined,
+                          color: Color(0xFF9CA3AF))),
+                  errorWidget: (_, __, ___) => Container(
+                      color: const Color(0xFFE5E7EB),
+                      child: const Icon(Icons.book_outlined,
+                          color: Color(0xFF9CA3AF))),
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-              Text(item.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF111827))),
-              if (item.author.isNotEmpty)
-                Text('by ${item.author}',
-                    style: const TextStyle(fontSize: 12,
-                        color: Color(0xFF6B7280))),
-              const SizedBox(height: 8),
-              Row(children: [
-                _ChipW('Qty: ${item.quantity}'),
-                const SizedBox(width: 8),
-                Text('KES ${_f(item.unitPrice)}',
-                    style: TextStyle(fontSize: 12,
-                        color: AppColors.primary,
-                        fontWeight: FontWeight.w500)),
-              ]),
-            ]),
-          ),
-          Text('KES ${_f(item.totalPrice)}',
-              style: const TextStyle(fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF111827))),
-        ]),
+                  Text(item.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF111827))),
+                  if (item.author.isNotEmpty)
+                    Text('by ${item.author}',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF6B7280))),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    _ChipW('Qty: ${item.quantity}'),
+                    const SizedBox(width: 8),
+                    Text('KES ${_f(item.unitPrice)}',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w500)),
+                  ]),
+                ],
+              ),
+            ),
+            Text('KES ${_f(item.totalPrice)}',
+                style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF111827))),
+          ],
+        ),
       );
 
   Widget _shippingCard() => _Card(
         child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-          _H(Icons.local_shipping_outlined, 'Shipping Address'),
-          const SizedBox(height: 12),
-          Text(_order!.shippingAddress,
-              style: const TextStyle(fontSize: 14,
-                  color: Color(0xFF4B5563), height: 1.5)),
-        ]),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _H(Icons.local_shipping_outlined, 'Shipping Address'),
+            const SizedBox(height: 12),
+            Text(_order!.shippingAddress,
+                style: const TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF4B5563),
+                    height: 1.5)),
+          ],
+        ),
       );
 
   Widget _paymentMethodCard() => _Card(
         child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-          _H(Icons.payment_rounded, 'Choose Payment Method'),
-          const SizedBox(height: 16),
-          _MethodCard(
-            selected:  _method == _PMethod.paystack,
-            icon:      Icons.credit_card_rounded,
-            iconColor: const Color(0xFF2563EB),
-            iconBg:    const Color(0xFFEFF6FF),
-            title:     'Paystack',
-            subtitle:  'Card / Bank Transfer',
-            accent:    const Color(0xFF2563EB),
-            onTap: () => setState(() {
-              _method = _PMethod.paystack;
-              _mstep  = _MStep.idle;
-              _error  = null;
-            }),
-          ),
-          const SizedBox(height: 10),
-          _MethodCard(
-            selected:  _method == _PMethod.mpesa,
-            icon:      Icons.smartphone_rounded,
-            iconColor: const Color(0xFF16A34A),
-            iconBg:    const Color(0xFFF0FDF4),
-            title:     'M-Pesa',
-            subtitle:  'Safaricom Daraja',
-            accent:    const Color(0xFF16A34A),
-            onTap: () => setState(() {
-              _method = _PMethod.mpesa;
-              _mstep  = _MStep.idle;
-              _error  = null;
-            }),
-          ),
-          if (_method == _PMethod.mpesa &&
-              _mstep == _MStep.idle) ...[
-            const SizedBox(height: 20),
-            const Text('M-Pesa Phone Number',
-                style: TextStyle(fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF374151))),
-            const SizedBox(height: 8),
-            Row(children: [
-              Container(
-                height: 48,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 14),
-                decoration: BoxDecoration(
-                    color: const Color(0xFFF9FAFB),
-                    border: Border.all(
-                        color: const Color(0xFFD1D5DB)),
-                    borderRadius: const BorderRadius.horizontal(
-                        left: Radius.circular(10))),
-                alignment: Alignment.center,
-                child: const Text('+254',
-                    style: TextStyle(fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF374151))),
-              ),
-              Expanded(
-                child: TextField(
-                  controller: _phoneCtrl,
-                  keyboardType: TextInputType.phone,
-                  onChanged: (_) => setState(() {}),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                    LengthLimitingTextInputFormatter(9),
-                  ],
-                  style: const TextStyle(fontSize: 14,
-                      color: Color(0xFF111827)),
-                  decoration: InputDecoration(
-                    hintText: '7XXXXXXXX',
-                    hintStyle: const TextStyle(
-                        color: Color(0xFF9CA3AF)),
-                    contentPadding:
-                        const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 14),
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: const OutlineInputBorder(
-                        borderRadius: BorderRadius.horizontal(
-                            right: Radius.circular(10)),
-                        borderSide: BorderSide(
-                            color: Color(0xFFD1D5DB))),
-                    enabledBorder: const OutlineInputBorder(
-                        borderRadius: BorderRadius.horizontal(
-                            right: Radius.circular(10)),
-                        borderSide: BorderSide(
-                            color: Color(0xFFD1D5DB))),
-                    focusedBorder: const OutlineInputBorder(
-                        borderRadius: BorderRadius.horizontal(
-                            right: Radius.circular(10)),
-                        borderSide: BorderSide(
-                            color: Color(0xFF16A34A),
-                            width: 2)),
-                  ),
-                ),
-              ),
-            ]),
-            const SizedBox(height: 6),
-            const Text(
-                'Enter the number registered on your M-Pesa '
-                'account.',
-                style: TextStyle(fontSize: 12,
-                    color: Color(0xFF6B7280))),
-          ],
-          if (_method == _PMethod.mpesa &&
-              _mstep == _MStep.promptSent) ...[
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _H(Icons.payment_rounded, 'Choose Payment Method'),
             const SizedBox(height: 16),
-            _BannerW(
+            _MethodCard(
+              selected:  _method == _PMethod.paystack,
+              icon:      Icons.credit_card_rounded,
+              iconColor: const Color(0xFF2563EB),
+              iconBg:    const Color(0xFFEFF6FF),
+              title:     'Paystack',
+              subtitle:  'Card / Bank Transfer',
+              accent:    const Color(0xFF2563EB),
+              onTap: () => setState(() {
+                _method = _PMethod.paystack;
+                _mstep  = _MStep.idle;
+                _error  = null;
+              }),
+            ),
+            const SizedBox(height: 10),
+            _MethodCard(
+              selected:  _method == _PMethod.mpesa,
               icon:      Icons.smartphone_rounded,
               iconColor: const Color(0xFF16A34A),
-              bg:        const Color(0xFFF0FDF4),
-              border:    const Color(0xFFBBF7D0),
-              title: 'STK Push Sent!',
-              body:
-                  'Check your phone (+254 ${_phoneCtrl.text}) '
-                  'for the M-Pesa prompt and enter your PIN.',
-              footer: const Row(children: [
-                SizedBox(width: 14, height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(
-                          Color(0xFF16A34A)))),
-                SizedBox(width: 8),
-                Text('Waiting for confirmation…',
-                    style: TextStyle(fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Color(0xFF16A34A))),
+              iconBg:    const Color(0xFFF0FDF4),
+              title:     'M-Pesa',
+              subtitle:  'Safaricom Daraja',
+              accent:    const Color(0xFF16A34A),
+              onTap: () => setState(() {
+                _method = _PMethod.mpesa;
+                _mstep  = _MStep.idle;
+                _error  = null;
+              }),
+            ),
+            if (_method == _PMethod.mpesa &&
+                _mstep == _MStep.idle) ...[
+              const SizedBox(height: 20),
+              const Text('M-Pesa Phone Number',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF374151))),
+              const SizedBox(height: 8),
+              Row(children: [
+                Container(
+                  height: 48,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14),
+                  decoration: BoxDecoration(
+                      color: const Color(0xFFF9FAFB),
+                      border: Border.all(
+                          color: const Color(0xFFD1D5DB)),
+                      borderRadius:
+                          const BorderRadius.horizontal(
+                              left: Radius.circular(10))),
+                  alignment: Alignment.center,
+                  child: const Text('+254',
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF374151))),
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: _phoneCtrl,
+                    keyboardType: TextInputType.phone,
+                    onChanged: (_) => setState(() {}),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(9),
+                    ],
+                    style: const TextStyle(
+                        fontSize: 14,
+                        color: Color(0xFF111827)),
+                    decoration: InputDecoration(
+                      hintText: '7XXXXXXXX',
+                      hintStyle: const TextStyle(
+                          color: Color(0xFF9CA3AF)),
+                      contentPadding:
+                          const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 14),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: const OutlineInputBorder(
+                          borderRadius:
+                              BorderRadius.horizontal(
+                                  right:
+                                      Radius.circular(10)),
+                          borderSide: BorderSide(
+                              color: Color(0xFFD1D5DB))),
+                      enabledBorder: const OutlineInputBorder(
+                          borderRadius:
+                              BorderRadius.horizontal(
+                                  right:
+                                      Radius.circular(10)),
+                          borderSide: BorderSide(
+                              color: Color(0xFFD1D5DB))),
+                      focusedBorder: const OutlineInputBorder(
+                          borderRadius:
+                              BorderRadius.horizontal(
+                                  right:
+                                      Radius.circular(10)),
+                          borderSide: BorderSide(
+                              color: Color(0xFF16A34A),
+                              width: 2)),
+                    ),
+                  ),
+                ),
               ]),
-            ),
-          ],
-          if (_method == _PMethod.mpesa &&
-              _mstep == _MStep.timedOut) ...[
-            const SizedBox(height: 16),
-            _BannerW(
-              icon:      Icons.access_time_rounded,
-              iconColor: const Color(0xFFD97706),
-              bg:        const Color(0xFFFFFBEB),
-              border:    const Color(0xFFFDE68A),
-              title: 'Payment not confirmed yet',
-              body:  "We didn't receive a confirmation. If you "
-                     "completed the payment, it may still be "
-                     "processing.",
-              footer: GestureDetector(
-                onTap: () => setState(
-                    () { _mstep = _MStep.idle; _error = null; }),
-                child: const Text('Try again',
-                    style: TextStyle(fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFFD97706),
-                        decoration: TextDecoration.underline)),
+              const SizedBox(height: 6),
+              const Text(
+                  'Enter the number registered on your M-Pesa '
+                  'account.',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF6B7280))),
+            ],
+            if (_method == _PMethod.mpesa &&
+                _mstep == _MStep.promptSent) ...[
+              const SizedBox(height: 16),
+              _BannerW(
+                icon:      Icons.smartphone_rounded,
+                iconColor: const Color(0xFF16A34A),
+                bg:        const Color(0xFFF0FDF4),
+                border:    const Color(0xFFBBF7D0),
+                title: 'STK Push Sent!',
+                body: 'Check your phone (+254 ${_phoneCtrl.text}) '
+                    'for the M-Pesa prompt and enter your PIN.',
+                footer: const Row(children: [
+                  SizedBox(
+                    width: 14, height: 14,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(
+                            Color(0xFF16A34A))),
+                  ),
+                  SizedBox(width: 8),
+                  Text('Waiting for confirmation…',
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xFF16A34A))),
+                ]),
               ),
-            ),
+            ],
+            if (_method == _PMethod.mpesa &&
+                _mstep == _MStep.timedOut) ...[
+              const SizedBox(height: 16),
+              _BannerW(
+                icon:      Icons.access_time_rounded,
+                iconColor: const Color(0xFFD97706),
+                bg:        const Color(0xFFFFFBEB),
+                border:    const Color(0xFFFDE68A),
+                title: 'Payment not confirmed yet',
+                body: "We didn't receive a confirmation. If you "
+                    "completed the payment, it may still be "
+                    "processing.",
+                footer: GestureDetector(
+                  onTap: () => setState(() {
+                    _mstep = _MStep.idle;
+                    _error = null;
+                  }),
+                  child: const Text('Try again',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFD97706),
+                          decoration:
+                              TextDecoration.underline)),
+                ),
+              ),
+            ],
           ],
-        ]),
+        ),
       );
 
   Widget _summaryCard() {
     final o = _order!;
     return _Card(
-        child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _H(Icons.receipt_long_rounded, 'Payment Summary'),
+          const SizedBox(height: 16),
+          _SR('Subtotal', 'KES ${_f(o.subTotal)}'),
+          if (o.discount > 0)
+            _SR('Discount', '-KES ${_f(o.discount)}',
+                c: const Color(0xFF16A34A)),
+          if (o.tax > 0) _SR('Tax', 'KES ${_f(o.tax)}'),
+          _SR('Shipping',
+              o.shipping == 0
+                  ? 'FREE'
+                  : 'KES ${_f(o.shipping)}'),
+          const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Divider(height: 1)),
+          Row(
+            mainAxisAlignment:
+                MainAxisAlignment.spaceBetween,
             children: [
-      _H(Icons.receipt_long_rounded, 'Payment Summary'),
-      const SizedBox(height: 16),
-      _SR('Subtotal', 'KES ${_f(o.subTotal)}'),
-      if (o.discount > 0)
-        _SR('Discount', '-KES ${_f(o.discount)}',
-            c: const Color(0xFF16A34A)),
-      if (o.tax > 0) _SR('Tax', 'KES ${_f(o.tax)}'),
-      _SR('Shipping',
-          o.shipping == 0 ? 'FREE' : 'KES ${_f(o.shipping)}'),
-      const Padding(
-          padding: EdgeInsets.symmetric(vertical: 12),
-          child: Divider(height: 1)),
-      Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-        const Text('Total',
-            style: TextStyle(fontSize: 17,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF111827))),
-        Text('KES ${_f(o.totalPrice)}',
-            style: TextStyle(fontSize: 20,
-                fontWeight: FontWeight.w900,
-                color: AppColors.primary)),
-      ]),
-    ]));
+              const Text('Total',
+                  style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF111827))),
+              Text('KES ${_f(o.totalPrice)}',
+                  style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.primary)),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _payButton() {
-    if (_mstep == _MStep.promptSent) return const SizedBox.shrink();
+    if (_mstep == _MStep.promptSent)
+      return const SizedBox.shrink();
     final isP = _method == _PMethod.paystack;
     final isM = _method == _PMethod.mpesa;
-    final ok  = (isP || (isM && _phoneCtrl.text.length >= 9)) &&
+    final ok  = (isP ||
+            (isM && _phoneCtrl.text.length >= 9)) &&
         !_processing;
     final col = isM
         ? const Color(0xFF16A34A)
@@ -1665,7 +1878,9 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
     return Container(
       color: Colors.white,
       padding: EdgeInsets.fromLTRB(
-          16, 12, 16,
+          16,
+          12,
+          16,
           12 + MediaQuery.of(context).padding.bottom),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         if (_error != null) ...[
@@ -1679,19 +1894,25 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
             style: ElevatedButton.styleFrom(
                 backgroundColor:
                     ok ? col : const Color(0xFFE5E7EB),
-                foregroundColor:
-                    ok ? Colors.white : const Color(0xFF9CA3AF),
+                foregroundColor: ok
+                    ? Colors.white
+                    : const Color(0xFF9CA3AF),
                 elevation: ok ? 2 : 0,
                 shadowColor: col.withOpacity(0.35),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14))),
+                    borderRadius:
+                        BorderRadius.circular(14))),
             child: _processing
-                ? const SizedBox(width: 22, height: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2.5,
-                        valueColor: AlwaysStoppedAnimation(
-                            Colors.white)))
+                ? const SizedBox(
+                    width: 22, height: 22,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor:
+                            AlwaysStoppedAnimation(
+                                Colors.white)))
                 : Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisAlignment:
+                        MainAxisAlignment.center,
                     children: [
                     Icon(
                       _method == _PMethod.none
@@ -1708,7 +1929,8 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
                           : isM
                               ? 'Pay with M-Pesa'
                               : 'Pay with Paystack',
-                      style: const TextStyle(fontSize: 16,
+                      style: const TextStyle(
+                          fontSize: 16,
                           fontWeight: FontWeight.w700),
                     ),
                   ]),
@@ -1720,20 +1942,25 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
 
   Widget _paidBar() => Container(
         color: Colors.white,
-        padding: EdgeInsets.fromLTRB(16, 12, 16,
+        padding: EdgeInsets.fromLTRB(
+            16,
+            12,
+            16,
             12 + MediaQuery.of(context).padding.bottom),
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
               color: const Color(0xFFF0FDF4),
-              border: Border.all(color: const Color(0xFFBBF7D0)),
+              border: Border.all(
+                  color: const Color(0xFFBBF7D0)),
               borderRadius: BorderRadius.circular(12)),
           child: const Row(children: [
             Icon(Icons.check_circle_rounded,
                 color: Color(0xFF16A34A), size: 22),
             SizedBox(width: 10),
             Text('Payment Completed',
-                style: TextStyle(fontSize: 15,
+                style: TextStyle(
+                    fontSize: 15,
                     fontWeight: FontWeight.w700,
                     color: Color(0xFF15803D))),
           ]),
@@ -1744,25 +1971,29 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
         backgroundColor: const Color(0xFFF5F5F7),
         body: Center(
           child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-            CircularProgressIndicator(
-                valueColor:
-                    AlwaysStoppedAnimation(AppColors.primary)),
-            const SizedBox(height: 20),
-            const Text('Loading order details…',
-                style: TextStyle(color: Color(0xFF6B7280),
-                    fontSize: 14)),
-          ]),
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(
+                  valueColor:
+                      AlwaysStoppedAnimation(AppColors.primary)),
+              const SizedBox(height: 20),
+              const Text('Loading order details…',
+                  style: TextStyle(
+                      color: Color(0xFF6B7280),
+                      fontSize: 14)),
+            ],
+          ),
         ),
       );
 
   Widget _errorView() => Scaffold(
         backgroundColor: const Color(0xFFF5F5F7),
         appBar: AppBar(
-          backgroundColor: Colors.white, elevation: 0,
+          backgroundColor: Colors.white,
+          elevation: 0,
           leading: IconButton(
-              icon: const Icon(Icons.arrow_back_ios_new_rounded,
+              icon: const Icon(
+                  Icons.arrow_back_ios_new_rounded,
                   size: 20),
               onPressed: () => Navigator.pop(context)),
           title: const Text('Checkout'),
@@ -1771,38 +2002,45 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
           child: Padding(
             padding: const EdgeInsets.all(32),
             child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-              const Icon(Icons.error_outline_rounded,
-                  size: 72, color: Color(0xFFEF4444)),
-              const SizedBox(height: 20),
-              const Text('Order Not Found',
-                  style: TextStyle(fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF111827))),
-              const SizedBox(height: 8),
-              Text(_error ?? 'Something went wrong.',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      color: Color(0xFF6B7280),
-                      fontSize: 14, height: 1.5)),
-              const SizedBox(height: 32),
-              ElevatedButton(
-                onPressed: () =>
-                    Navigator.pushNamedAndRemoveUntil(
-                        context, '/books', (_) => false),
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 32, vertical: 14),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12))),
-                child: const Text('Continue Shopping',
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline_rounded,
+                    size: 72,
+                    color: Color(0xFFEF4444)),
+                const SizedBox(height: 20),
+                const Text('Order Not Found',
                     style: TextStyle(
-                        fontWeight: FontWeight.w700)),
-              ),
-            ]),
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF111827))),
+                const SizedBox(height: 8),
+                Text(_error ?? 'Something went wrong.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        color: Color(0xFF6B7280),
+                        fontSize: 14,
+                        height: 1.5)),
+                const SizedBox(height: 32),
+                ElevatedButton(
+                  onPressed: () =>
+                      Navigator.pushNamedAndRemoveUntil(
+                          context, '/books', (_) => false),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding:
+                          const EdgeInsets.symmetric(
+                              horizontal: 32,
+                              vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(12))),
+                  child: const Text('Continue Shopping',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700)),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -1811,36 +2049,43 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
             color: const Color(0xFFFEF2F2),
-            border: Border.all(color: const Color(0xFFFECACA)),
+            border: Border.all(
+                color: const Color(0xFFFECACA)),
             borderRadius: BorderRadius.circular(10)),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-          const Icon(Icons.error_outline_rounded,
-              color: Color(0xFFDC2626), size: 18),
-          const SizedBox(width: 8),
-          Expanded(
-              child: Text(msg,
-                  style: const TextStyle(
-                      color: Color(0xFF991B1B),
-                      fontSize: 13, height: 1.4))),
-        ]),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.error_outline_rounded,
+                color: Color(0xFFDC2626), size: 18),
+            const SizedBox(width: 8),
+            Expanded(
+                child: Text(msg,
+                    style: const TextStyle(
+                        color: Color(0xFF991B1B),
+                        fontSize: 13,
+                        height: 1.4))),
+          ],
+        ),
       );
 
   String _f(double v) => v
       .toStringAsFixed(0)
       .replaceAllMapped(
           RegExp(r'\B(?=(\d{3})+(?!\d))'), (_) => ',');
+
   String _mon(int m) => const [
-        '', 'January', 'February', 'March', 'April',
-        'May', 'June', 'July', 'August', 'September',
-        'October', 'November', 'December',
+        '',
+        'January',   'February', 'March',    'April',
+        'May',       'June',     'July',     'August',
+        'September', 'October',  'November', 'December',
       ][m];
+
   String _cap(String s) =>
       s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SHARED SUB-WIDGETS
+// SHARED CHECKOUT SUB-WIDGETS
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _Card extends StatelessWidget {
@@ -1875,7 +2120,8 @@ class _H extends StatelessWidget {
         Icon(icon, size: 18, color: const Color(0xFF6B7280)),
         const SizedBox(width: 8),
         Text(label,
-            style: const TextStyle(fontSize: 16,
+            style: const TextStyle(
+                fontSize: 16,
                 fontWeight: FontWeight.w700,
                 color: Color(0xFF111827))),
       ]);
@@ -1890,17 +2136,21 @@ class _KV extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-          Text(l,
-              style: const TextStyle(
-                  fontSize: 13, color: Color(0xFF6B7280))),
-          Text(v,
-              style: TextStyle(fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: vc ?? const Color(0xFF111827),
-                  fontFamily: mono ? 'monospace' : null)),
-        ]));
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(l,
+                style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF6B7280))),
+            Text(v,
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: vc ?? const Color(0xFF111827),
+                    fontFamily: mono ? 'monospace' : null)),
+          ],
+        ),
+      );
 }
 
 class _SR extends StatelessWidget {
@@ -1911,16 +2161,20 @@ class _SR extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.only(bottom: 10),
         child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-          Text(l,
-              style: const TextStyle(
-                  fontSize: 14, color: Color(0xFF6B7280))),
-          Text(v,
-              style: TextStyle(fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: c ?? const Color(0xFF111827))),
-        ]));
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(l,
+                style: const TextStyle(
+                    fontSize: 14,
+                    color: Color(0xFF6B7280))),
+            Text(v,
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: c ?? const Color(0xFF111827))),
+          ],
+        ),
+      );
 }
 
 class _ChipW extends StatelessWidget {
@@ -1934,7 +2188,8 @@ class _ChipW extends StatelessWidget {
             color: const Color(0xFFF3F4F6),
             borderRadius: BorderRadius.circular(6)),
         child: Text(label,
-            style: const TextStyle(fontSize: 11,
+            style: const TextStyle(
+                fontSize: 11,
                 fontWeight: FontWeight.w500,
                 color: Color(0xFF374151))));
 }
@@ -1971,22 +2226,29 @@ class _MethodCard extends StatelessWidget {
           child: Row(children: [
             Container(
                 width: 42, height: 42,
-                decoration: BoxDecoration(color: iconBg,
-                    borderRadius: BorderRadius.circular(10)),
-                child: Icon(icon, color: iconColor, size: 22)),
+                decoration: BoxDecoration(
+                    color: iconBg,
+                    borderRadius:
+                        BorderRadius.circular(10)),
+                child: Icon(icon,
+                    color: iconColor, size: 22)),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text(title,
-                    style: const TextStyle(fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF111827))),
-                Text(subtitle,
-                    style: const TextStyle(fontSize: 12,
-                        color: Color(0xFF6B7280))),
-              ]),
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF111827))),
+                  Text(subtitle,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF6B7280))),
+                ],
+              ),
             ),
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 200),
@@ -2021,29 +2283,37 @@ class _BannerW extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(color: bg,
+        decoration: BoxDecoration(
+            color: bg,
             border: Border.all(color: border),
             borderRadius: BorderRadius.circular(12)),
         child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-          Icon(icon, color: iconColor, size: 22),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: iconColor, size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
                 children: [
-              Text(title,
-                  style: TextStyle(fontWeight: FontWeight.w700,
-                      color: iconColor, fontSize: 14)),
-              const SizedBox(height: 4),
-              Text(body,
-                  style: const TextStyle(fontSize: 13,
-                      color: Color(0xFF374151), height: 1.4)),
-              const SizedBox(height: 8),
-              footer,
-            ]),
-          ),
-        ]),
+                  Text(title,
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: iconColor,
+                          fontSize: 14)),
+                  const SizedBox(height: 4),
+                  Text(body,
+                      style: const TextStyle(
+                          fontSize: 13,
+                          color: Color(0xFF374151),
+                          height: 1.4)),
+                  const SizedBox(height: 8),
+                  footer,
+                ],
+              ),
+            ),
+          ],
+        ),
       );
 }

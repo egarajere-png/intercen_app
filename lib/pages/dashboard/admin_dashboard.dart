@@ -1,26 +1,10 @@
 // lib/pages/dashboard/admin_dashboard.dart
 //
-// ── DESIGN SOURCE: mirrors the React/TSX AdminDashboard exactly ──────────────
-//   • Same sections: Hero (charcoal), Stats (5-up), Pending alert,
-//     Tabs (Users / Submissions / Content / Orders / My Profile)
-//   • Same colour palette: primary #B11226, charcoal #1A1A2E, bg #F9F5EF,
-//     green #16A34A, amber #D97706, blue #2563EB, purple #7C3AED, red #DC2626
-//   • Same typography: PlayfairDisplay display, DM Sans body
-//   • Users tab: search box + table with inline role dropdown + active toggle
-//   • Submissions tab: per-card approve/review/reject + rejection dialog overlay
-//   • Content tab: table with view/edit actions
-//   • Orders tab: table
-//   • Profile tab: full self-contained edit form
-//
-// ── LAYOUT FIXES (box.dart:2251 / mouse_tracker:199) ─────────────────────────
-//   1. NO NestedScrollView + TabBarView — replaced with a single
-//      CustomScrollView inside LayoutBuilder → SizedBox (finite height).
-//   2. Every list/grid uses shrinkWrap + NeverScrollableScrollPhysics inside
-//      a SliverToBoxAdapter.
-//   3. NO Flutter TabBar widget — custom horizontal pill row.
-//   4. Rejection dialog is a Stack overlay inside the body, NOT a Dialog
-//      widget (avoids extra route / context issues on Flutter Web).
-// ─────────────────────────────────────────────────────────────────────────────
+// FIX: Added initialTab support via WidgetsBinding.instance.addPostFrameCallback
+// in initState. When Settings navigates here with arguments: {'initialTab': n},
+// the dashboard opens on the correct tab:
+//   0 = Users      (Manage Users tile in Settings)
+//   3 = Orders     (My Orders tile in Settings)
 
 import 'dart:convert';
 import 'dart:io';
@@ -67,9 +51,8 @@ const _roles = [
   'moderator', 'admin', 'corporate_user',
 ];
 
-// ─────────────────────────────────────────────────────────────────────────────
 class AdminDashboardPage extends StatefulWidget {
-  const AdminDashboardPage({super.key});
+  const AdminDashboardPage({Key? key}) : super(key: key);
   @override
   State<AdminDashboardPage> createState() => _AdminDashboardPageState();
 }
@@ -123,6 +106,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     _bioCtrl.addListener(() => setState(() {}));
     _searchCtrl.addListener(_filterUsers);
     _loadAll();
+
+    // ✅ FIX: Read initialTab argument from Navigator route settings.
+    // ModalRoute.of(context) is null during initState so we must defer
+    // to addPostFrameCallback when the widget is fully in the route tree.
+    // Tab mapping:
+    //   0 = Users  | 1 = Submissions | 2 = Content
+    //   3 = Orders | 4 = My Profile
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final args = ModalRoute.of(context)?.settings.arguments;
+      if (args is Map<String, dynamic>) {
+        final t = args['initialTab'];
+        if (t is int && mounted) setState(() => _tab = t);
+      }
+    });
   }
 
   @override
@@ -173,12 +170,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       ]);
       if (!mounted) return;
 
-      final p      = res[0] as Map<String, dynamic>?;
-      final users  = _asList(res[1]);
-      final cont   = _asList(res[2]);
-      final pubs   = _asList(res[3]);
-      final ords   = _asList(res[4]);
-      final rev    = ords
+      final p    = res[0] as Map<String, dynamic>?;
+      final users = _asList(res[1]);
+      final cont  = _asList(res[2]);
+      final pubs  = _asList(res[3]);
+      final ords  = _asList(res[4]);
+      final rev   = ords
           .where((o) => o['payment_status'] == 'paid')
           .fold(0.0, (s, o) =>
               s + (double.tryParse(o['total_price']?.toString() ?? '0') ?? 0));
@@ -253,17 +250,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _toast('Protected admins cannot be deactivated.', err: true);
       return;
     }
-    final err = await _sb
-        .from('profiles')
-        .update({'is_active': !current})
-        .eq('id', targetId);
+    await _sb.from('profiles')
+        .update({'is_active': !current}).eq('id', targetId);
     setState(() {
-      _users = _users
-          .map((u) => u['id'] == targetId ? {...u, 'is_active': !current} : u)
-          .toList();
-      _filteredUsers = _filteredUsers
-          .map((u) => u['id'] == targetId ? {...u, 'is_active': !current} : u)
-          .toList();
+      _users = _users.map((u) =>
+          u['id'] == targetId ? {...u, 'is_active': !current} : u).toList();
+      _filteredUsers = _filteredUsers.map((u) =>
+          u['id'] == targetId ? {...u, 'is_active': !current} : u).toList();
     });
   }
 
@@ -272,7 +265,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     setState(() => _processingPub = true);
     try {
       final updates = <String, dynamic>{
-        'status': action,
+        'status':      action,
         'reviewed_by': RoleService.instance.userId,
         'reviewed_at': DateTime.now().toIso8601String(),
       };
@@ -287,11 +280,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       if (submittedBy != null) {
         final fb = _feedbackCtrl.text.trim();
         final msgs = {
-          'approved': 'Your manuscript "${pub['title']}" has been approved!',
-          'rejected': 'Your manuscript "${pub['title']}" was not approved.'
+          'approved':     'Your manuscript "${pub['title']}" has been approved!',
+          'rejected':     'Your manuscript "${pub['title']}" was not approved.'
               '${fb.isNotEmpty ? ' Feedback: $fb' : ''}',
-          'under_review':
-              'Your manuscript "${pub['title']}" is now under review.',
+          'under_review': 'Your manuscript "${pub['title']}" is now under review.',
         };
         await _sb.from('notifications').insert({
           'user_id': submittedBy,
@@ -314,8 +306,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             .map((p) => p['id'] == pubId ? {...p, 'status': action} : p)
             .toList();
         _statPending = _publications
-            .where((p) => p['status'] == 'pending')
-            .length;
+            .where((p) => p['status'] == 'pending').length;
         _rejectTarget = null;
         _feedbackCtrl.clear();
       });
@@ -415,7 +406,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             height: h,
             child: Stack(
               children: [
-                // ── Main scrollable content ──────────────────────────────
                 CustomScrollView(
                   physics: const ClampingScrollPhysics(),
                   slivers: [
@@ -430,7 +420,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     const SliverToBoxAdapter(child: SizedBox(height: 32)),
                   ],
                 ),
-                // ── Rejection overlay (on top of everything) ─────────────
                 if (_rejectTarget != null)
                   _RejectOverlay(
                     pub: _rejectTarget!,
@@ -451,7 +440,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  // ── loading ───────────────────────────────────────────────────────────────
   Widget _loadingScreen() => Scaffold(
         backgroundColor: _kBg,
         body: const Center(
@@ -460,7 +448,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         ),
       );
 
-  // ── sliver app bar ────────────────────────────────────────────────────────
   SliverAppBar _appBar(double w) => SliverAppBar(
         pinned: true,
         elevation: 0,
@@ -475,15 +462,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         title: Row(children: [
           const Icon(Icons.shield_rounded, color: _kRed, size: 18),
           const SizedBox(width: 8),
-          Text(
-            'Admin Panel',
-            style: TextStyle(
-              color: _kWhite,
-              fontWeight: FontWeight.w800,
-              fontFamily: 'PlayfairDisplay',
-              fontSize: w < 360 ? 16 : 18,
-            ),
-          ),
+          Text('Admin Panel',
+              style: TextStyle(
+                color: _kWhite,
+                fontWeight: FontWeight.w800,
+                fontFamily: 'PlayfairDisplay',
+                fontSize: w < 360 ? 16 : 18,
+              )),
         ]),
         actions: [
           IconButton(
@@ -507,10 +492,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         ],
       );
 
-  // ── hero banner (charcoal, matching TSX) ─────────────────────────────────
   Widget _heroBanner(double w) {
-    final pad  = _hp(w);
-    final name = _nameCtrl.text.isNotEmpty
+    final pad   = _hp(w);
+    final name  = _nameCtrl.text.isNotEmpty
         ? _nameCtrl.text
         : (_profile?['full_name'] as String? ?? 'Administrator');
     final initL = name.isNotEmpty ? name[0].toUpperCase() : 'A';
@@ -522,7 +506,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // avatar with red shield badge
           Stack(children: [
             GestureDetector(
               onTap: _pickAvatar,
@@ -578,8 +561,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     decoration: BoxDecoration(
                       color: _kRed.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                          color: _kRed.withOpacity(0.4)),
+                      border: Border.all(color: _kRed.withOpacity(0.4)),
                     ),
                     child: const Text('ADMIN',
                         style: TextStyle(
@@ -599,7 +581,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ],
             ),
           ),
-          // action buttons (visible on wider screens)
           if (w >= 500) ...[
             _HeroBtnOutline(
               label: 'Upload',
@@ -619,7 +600,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  // ── stats row (5-up, matching TSX grid) ──────────────────────────────────
   Widget _statsRow(double w) {
     final pad  = _hp(w);
     final cols = w >= 700 ? 5 : 3;
@@ -635,7 +615,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       _StatData('Revenue (KES)',  _revenue.toStringAsFixed(0),
           Icons.trending_up_rounded,   _kEmerald, _kEmeraldBg),
     ];
-
     return Padding(
       padding: EdgeInsets.fromLTRB(pad, 20, pad, 0),
       child: GridView.count(
@@ -650,7 +629,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  // ── pending alert (matches TSX amber banner) ──────────────────────────────
   Widget _pendingAlert(int count, double w) {
     final pad = _hp(w);
     return Padding(
@@ -663,8 +641,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(children: [
-          const Icon(Icons.warning_amber_rounded,
-              color: _kAmber, size: 20),
+          const Icon(Icons.warning_amber_rounded, color: _kAmber, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -699,17 +676,17 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  // ── tab pill row ──────────────────────────────────────────────────────────
   Widget _tabRow(double w) {
     final pad = _hp(w);
-    final pending = _publications.where((p) => p['status'] == 'pending').length;
+    final pending =
+        _publications.where((p) => p['status'] == 'pending').length;
     final tabs = [
-      (Icons.people_outline,       'Users'),
+      (Icons.people_outline, 'Users'),
       (Icons.description_outlined,
           'Submissions${pending > 0 ? ' ($pending)' : ''}'),
-      (Icons.book_outlined,        'Content'),
-      (Icons.shopping_bag_outlined,'Orders'),
-      (Icons.person_outline,       'My Profile'),
+      (Icons.book_outlined, 'Content'),
+      (Icons.shopping_bag_outlined, 'Orders'),
+      (Icons.person_outline, 'My Profile'),
     ];
 
     return Padding(
@@ -763,7 +740,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  // ── tab body dispatcher ───────────────────────────────────────────────────
   Widget _tabBody(double w) {
     final pad = _hp(w);
     Widget body;
@@ -788,12 +764,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // header + search
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
               child: Wrap(
-                spacing: 12,
-                runSpacing: 12,
+                spacing: 12, runSpacing: 12,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   const Text('User Management',
@@ -804,8 +778,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         color: Color(0xFF1F2937),
                       )),
                   SizedBox(
-                    width: 220,
-                    height: 38,
+                    width: 220, height: 38,
                     child: TextField(
                       controller: _searchCtrl,
                       style: const TextStyle(
@@ -881,7 +854,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final role        = u['role'] as String? ?? 'reader';
     final isActive    = u['is_active'] != false;
     final name        = u['full_name'] as String? ?? '—';
-    final email       = u['email']    as String? ??
+    final email       = u['email'] as String? ??
         ((u['id'] as String).substring(0, 12) + '…');
     final avatarUrl   = u['avatar_url'] as String?;
     final initial     = name.isNotEmpty ? name[0].toUpperCase() : '?';
@@ -893,20 +866,19 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // avatar
           SizedBox(
             width: 38, height: 38,
             child: ClipOval(
               child: avatarUrl != null && avatarUrl.isNotEmpty
                   ? CachedNetworkImage(
-                      imageUrl: avatarUrl, fit: BoxFit.cover,
+                      imageUrl: avatarUrl,
+                      fit: BoxFit.cover,
                       errorWidget: (_, __, ___) =>
                           _initAvatar(initial))
                   : _initAvatar(initial),
             ),
           ),
           const SizedBox(width: 12),
-          // name / email
           Expanded(
             flex: 3,
             child: Column(
@@ -938,7 +910,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             ),
           ),
           const SizedBox(width: 8),
-          // role selector or locked pill
           if (isProtected)
             _RolePill('admin', _roleColor('admin'))
           else
@@ -949,7 +920,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   _changeRole(u['id'] as String, r ?? role),
             ),
           const SizedBox(width: 8),
-          // account type
           if (MediaQuery.of(context).size.width >= 600)
             Padding(
               padding: const EdgeInsets.only(right: 8),
@@ -959,12 +929,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       fontSize: 11,
                       color: _kMutedLt)),
             ),
-          // active toggle
           GestureDetector(
             onTap: isProtected
                 ? null
-                : () => _toggleActive(
-                    u['id'] as String, isActive),
+                : () => _toggleActive(u['id'] as String, isActive),
             child: Container(
               padding: const EdgeInsets.symmetric(
                   horizontal: 8, vertical: 3),
@@ -983,7 +951,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ),
             ),
           ),
-          // joined date
           if (MediaQuery.of(context).size.width >= 700)
             Padding(
               padding: const EdgeInsets.only(left: 8),
@@ -1021,8 +988,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           child: Center(
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               Icon(Icons.description_outlined,
-                  size: 48,
-                  color: _kMutedLt.withOpacity(0.5)),
+                  size: 48, color: _kMutedLt.withOpacity(0.5)),
               const SizedBox(height: 12),
               const Text('No manuscript submissions yet.',
                   style: TextStyle(
@@ -1034,7 +1000,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         ),
       );
     }
-
     return ListView.separated(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -1052,106 +1017,97 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Wrap(spacing: 8, runSpacing: 4,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          Text(pub['title'] as String? ?? '—',
-                              style: const TextStyle(
-                                fontFamily: 'PlayfairDisplay',
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF1F2937),
-                              )),
-                          _StatusPill(status),
-                        ]),
-                    const SizedBox(height: 4),
-                    Text(
-                      'By ${pub['author_name'] ?? '—'}'
-                      '${pub['publishing_type'] != null ? '  ·  ${pub['publishing_type']} publishing' : ''}',
-                      style: const TextStyle(
-                          fontFamily: 'DM Sans',
-                          fontSize: 12,
-                          color: _kMuted),
-                    ),
-                    if ((pub['description'] as String? ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(pub['description'] as String,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontFamily: 'DM Sans',
-                              fontSize: 12,
-                              color: _kMutedLt)),
-                    ],
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(spacing: 8, runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                    Text(pub['title'] as String? ?? '—',
+                        style: const TextStyle(
+                          fontFamily: 'PlayfairDisplay',
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1F2937),
+                        )),
+                    _StatusPill(status),
+                  ]),
+                  const SizedBox(height: 4),
+                  Text(
+                    'By ${pub['author_name'] ?? '—'}'
+                    '${pub['publishing_type'] != null ? '  ·  ${pub['publishing_type']} publishing' : ''}',
+                    style: const TextStyle(
+                        fontFamily: 'DM Sans',
+                        fontSize: 12,
+                        color: _kMuted),
+                  ),
+                  if ((pub['description'] as String? ?? '').isNotEmpty) ...[
                     const SizedBox(height: 6),
-                    Wrap(spacing: 14, runSpacing: 4, children: [
-                      if (pub['language'] != null)
-                        _metaTag(pub['language'] as String),
-                      if (pub['pages'] != null)
-                        _metaTag('${pub['pages']} pages'),
-                      _metaTag('Submitted ${_date(pub['created_at'])}'),
-                    ]),
+                    Text(pub['description'] as String,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontFamily: 'DM Sans',
+                            fontSize: 12,
+                            color: _kMutedLt)),
                   ],
+                  const SizedBox(height: 6),
+                  Wrap(spacing: 14, runSpacing: 4, children: [
+                    if (pub['language'] != null)
+                      _metaTag(pub['language'] as String),
+                    if (pub['pages'] != null)
+                      _metaTag('${pub['pages']} pages'),
+                    _metaTag('Submitted ${_date(pub['created_at'])}'),
+                  ]),
+                ],
+              ),
+            ),
+            if (pub['manuscript_file_url'] != null) ...[
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.visibility_outlined, size: 13),
+                label: const Text('View File',
+                    style: TextStyle(
+                        fontFamily: 'DM Sans', fontSize: 12)),
+                onPressed: () {},
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _kMuted,
+                  side: const BorderSide(color: _kBorder),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(7)),
                 ),
               ),
-              if (pub['manuscript_file_url'] != null) ...[
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.visibility_outlined, size: 13),
-                  label: const Text('View File',
-                      style: TextStyle(
-                          fontFamily: 'DM Sans', fontSize: 12)),
-                  onPressed: () {},
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: _kMuted,
-                    side: const BorderSide(color: _kBorder),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 6),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(7)),
-                  ),
-                ),
-              ],
             ],
-          ),
+          ]),
           if (canAct) ...[
             const SizedBox(height: 12),
             Row(children: [
-              Expanded(
-                child: _ActionBtn(
-                  label: 'Approve',
-                  icon: Icons.check_circle_outline,
-                  color: _kGreen,
-                  onTap: () =>
-                      _pubAction(pub['id'] as String, 'approved'),
-                ),
-              ),
+              Expanded(child: _ActionBtn(
+                label: 'Approve',
+                icon: Icons.check_circle_outline,
+                color: _kGreen,
+                onTap: () =>
+                    _pubAction(pub['id'] as String, 'approved'),
+              )),
               const SizedBox(width: 8),
-              Expanded(
-                child: _ActionBtn(
-                  label: 'Review',
-                  icon: Icons.access_time_rounded,
-                  color: _kBlue,
-                  onTap: () =>
-                      _pubAction(pub['id'] as String, 'under_review'),
-                ),
-              ),
+              Expanded(child: _ActionBtn(
+                label: 'Review',
+                icon: Icons.access_time_rounded,
+                color: _kBlue,
+                onTap: () =>
+                    _pubAction(pub['id'] as String, 'under_review'),
+              )),
               const SizedBox(width: 8),
-              Expanded(
-                child: _ActionBtn(
-                  label: 'Reject',
-                  icon: Icons.cancel_outlined,
-                  color: _kRed,
-                  onTap: () => setState(() => _rejectTarget = pub),
-                ),
-              ),
+              Expanded(child: _ActionBtn(
+                label: 'Reject',
+                icon: Icons.cancel_outlined,
+                color: _kRed,
+                onTap: () => setState(() => _rejectTarget = pub),
+              )),
             ]),
           ],
           if ((pub['rejection_feedback'] as String? ?? '').isNotEmpty) ...[
@@ -1160,8 +1116,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 color: _kRedBg,
-                border: Border.all(
-                    color: const Color(0xFFFECACA)),
+                border: Border.all(color: const Color(0xFFFECACA)),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: RichText(
@@ -1174,8 +1129,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     const TextSpan(
                         text: 'Feedback: ',
                         style: TextStyle(fontWeight: FontWeight.w700)),
-                    TextSpan(
-                        text: pub['rejection_feedback'] as String),
+                    TextSpan(text: pub['rejection_feedback'] as String),
                   ],
                 ),
               ),
@@ -1208,7 +1162,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 _SmallBtn(
                   label: 'Upload',
                   icon: Icons.upload_rounded,
-                  onTap: () => Navigator.pushNamed(context, '/upload'),
+                  onTap: () =>
+                      Navigator.pushNamed(context, '/upload'),
                 ),
                 const SizedBox(width: 8),
                 _SmallBtn(
@@ -1313,7 +1268,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 fontSize: 11,
                 color: _kMutedLt)),
         const SizedBox(width: 12),
-        // view
         IconButton(
           icon: const Icon(Icons.visibility_outlined,
               size: 16, color: _kMuted),
@@ -1321,10 +1275,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               context, '/book-detail', arguments: c),
           tooltip: 'View',
           padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(
-              minWidth: 28, minHeight: 28),
+          constraints:
+              const BoxConstraints(minWidth: 28, minHeight: 28),
         ),
-        // edit
         IconButton(
           icon: const Icon(Icons.edit_outlined,
               size: 16, color: _kMuted),
@@ -1332,8 +1285,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               context, '/content/update/${c['id']}'),
           tooltip: 'Edit',
           padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(
-              minWidth: 28, minHeight: 28),
+          constraints:
+              const BoxConstraints(minWidth: 28, minHeight: 28),
         ),
       ]),
     );
@@ -1388,7 +1341,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       padding: const EdgeInsets.symmetric(
           horizontal: 20, vertical: 12),
       child: Row(children: [
-        // ID
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1419,15 +1371,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ),
         ),
         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text(
-            'KES ${_price(o['total_price'])}',
-            style: const TextStyle(
-              fontFamily: 'DM Sans',
-              fontWeight: FontWeight.w800,
-              fontSize: 14,
-              color: _kPrimary,
-            ),
-          ),
+          Text('KES ${_price(o['total_price'])}',
+              style: const TextStyle(
+                fontFamily: 'DM Sans',
+                fontWeight: FontWeight.w800,
+                fontSize: 14,
+                color: _kPrimary,
+              )),
           Text(_date(o['created_at']),
               style: const TextStyle(
                   fontFamily: 'DM Sans',
@@ -1453,8 +1403,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   color: Color(0xFF1F2937),
                 )),
             const SizedBox(height: 24),
-
-            // avatar
             const Text('Profile Picture',
                 style: TextStyle(
                     fontFamily: 'DM Sans',
@@ -1498,8 +1446,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                 OutlinedButton.icon(
                   icon: const Icon(Icons.upload_file, size: 14),
                   label: const Text('Change Photo',
-                      style:
-                          TextStyle(fontFamily: 'DM Sans', fontSize: 13)),
+                      style: TextStyle(
+                          fontFamily: 'DM Sans', fontSize: 13)),
                   onPressed: _pickAvatar,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: const Color(0xFF1F2937),
@@ -1517,8 +1465,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ]),
             ]),
             const SizedBox(height: 24),
-
-            // Email read-only
             _lbl('Email'),
             const SizedBox(height: 6),
             TextField(
@@ -1539,8 +1485,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ),
             ),
             const SizedBox(height: 14),
-
-            // fields
             LayoutBuilder(builder: (_, c) {
               final wide = c.maxWidth >= 500;
               return Column(
@@ -1643,7 +1587,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               );
             }),
             const SizedBox(height: 28),
-
             Wrap(spacing: 12, runSpacing: 12, children: [
               SizedBox(
                 height: 46,
@@ -1683,7 +1626,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         horizontal: 20, vertical: 12),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8)),
-                    textStyle: const TextStyle(fontFamily: 'DM Sans'),
+                    textStyle:
+                        const TextStyle(fontFamily: 'DM Sans'),
                   ),
                   child: const Text('Back'),
                 ),
@@ -1719,12 +1663,14 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             _NavItem(
               icon: Icons.menu_book_outlined,
               label: 'Books',
-              onTap: () => Navigator.pushNamed(context, '/books'),
+              onTap: () =>
+                  Navigator.pushNamed(context, '/books'),
             ),
             _NavItem(
               icon: Icons.upload_outlined,
               label: 'Upload',
-              onTap: () => Navigator.pushNamed(context, '/upload'),
+              onTap: () =>
+                  Navigator.pushNamed(context, '/upload'),
             ),
             const _NavItem(
                 icon: Icons.admin_panel_settings_outlined,
@@ -1734,9 +1680,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         ),
       );
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Shared helpers
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── shared helpers ────────────────────────────────────────────────────────
   Widget _field(TextEditingController ctrl, String label,
       {int lines = 1, String? hint, int? maxLen}) =>
       Column(
@@ -1782,7 +1726,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Widget _row2(List<Widget> kids) => Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: kids
-            .expand((w) => [Expanded(child: w), const SizedBox(width: 14)])
+            .expand((w) =>
+                [Expanded(child: w), const SizedBox(width: 14)])
             .toList()
           ..removeLast(),
       );
@@ -1808,9 +1753,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     try {
       final d = DateTime.parse(raw as String).toLocal();
       return '${d.day}/${d.month}/${d.year}';
-    } catch (_) {
-      return '';
-    }
+    } catch (_) { return ''; }
   }
 
   String _price(dynamic raw) {
@@ -1836,9 +1779,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// _StatData  (value object for stat cards)
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Value object ──────────────────────────────────────────────────────────────
 class _StatData {
   final String label, value;
   final IconData icon;
@@ -1846,13 +1787,10 @@ class _StatData {
   const _StatData(this.label, this.value, this.icon, this.color, this.bg);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stat card
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Stat card ─────────────────────────────────────────────────────────────────
 class _StatCard extends StatelessWidget {
   final _StatData d;
   const _StatCard(this.d);
-
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.all(12),
@@ -1902,18 +1840,12 @@ class _StatCard extends StatelessWidget {
       );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Role pill badge
-// ─────────────────────────────────────────────────────────────────────────────
 class _RolePill extends StatelessWidget {
-  final String label;
-  final Color color;
+  final String label; final Color color;
   const _RolePill(this.label, this.color);
-
   @override
   Widget build(BuildContext context) => Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
         decoration: BoxDecoration(
           color: color.withOpacity(0.1),
           border: Border.all(color: color.withOpacity(0.3)),
@@ -1928,18 +1860,12 @@ class _RolePill extends StatelessWidget {
       );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Role dropdown (inline select for user rows)
-// ─────────────────────────────────────────────────────────────────────────────
 class _RoleDropdown extends StatelessWidget {
   final String value;
   final bool saving;
   final ValueChanged<String?> onChanged;
-  const _RoleDropdown({
-    required this.value,
-    required this.saving,
-    required this.onChanged,
-  });
+  const _RoleDropdown(
+      {required this.value, required this.saving, required this.onChanged});
 
   Color _color(String r) => switch (r) {
         'admin'          => _kRed,
@@ -1957,9 +1883,7 @@ class _RoleDropdown extends StatelessWidget {
     return saving
         ? SizedBox(
             width: 16, height: 16,
-            child: CircularProgressIndicator(
-                strokeWidth: 2, color: c),
-          )
+            child: CircularProgressIndicator(strokeWidth: 2, color: c))
         : DropdownButton<String>(
             value: value,
             isDense: true,
@@ -1985,13 +1909,9 @@ class _RoleDropdown extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Status pill
-// ─────────────────────────────────────────────────────────────────────────────
 class _StatusPill extends StatelessWidget {
   final String status;
   const _StatusPill(this.status);
-
   Color get _color => switch (status) {
         'published' || 'approved' || 'completed' => _kGreen,
         'rejected'  || 'cancelled'               => _kRed,
@@ -1999,11 +1919,9 @@ class _StatusPill extends StatelessWidget {
         'pending'                                => _kAmber,
         _                                        => _kMuted,
       };
-
   @override
   Widget build(BuildContext context) => Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
         decoration: BoxDecoration(
           color: _color.withOpacity(0.1),
           borderRadius: BorderRadius.circular(6),
@@ -2019,20 +1937,12 @@ class _StatusPill extends StatelessWidget {
       );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Action button (Approve / Review / Reject)
-// ─────────────────────────────────────────────────────────────────────────────
 class _ActionBtn extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
+  final String label; final IconData icon;
+  final Color color; final VoidCallback onTap;
   const _ActionBtn(
-      {required this.label,
-      required this.icon,
-      required this.color,
-      required this.onTap});
-
+      {required this.label, required this.icon,
+       required this.color, required this.onTap});
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
@@ -2043,39 +1953,29 @@ class _ActionBtn extends StatelessWidget {
             border: Border.all(color: color.withOpacity(0.25)),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 13, color: color),
-              const SizedBox(width: 5),
-              Text(label,
-                  style: TextStyle(
-                      fontFamily: 'DM Sans',
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: color)),
-            ],
-          ),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(icon, size: 13, color: color),
+            const SizedBox(width: 5),
+            Text(label,
+                style: TextStyle(
+                    fontFamily: 'DM Sans',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: color)),
+          ]),
         ),
       );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Small outlined button (header actions)
-// ─────────────────────────────────────────────────────────────────────────────
 class _SmallBtn extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final VoidCallback onTap;
+  final String label; final IconData icon; final VoidCallback onTap;
   const _SmallBtn(
       {required this.label, required this.icon, required this.onTap});
-
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
         child: Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           decoration: BoxDecoration(
             border: Border.all(color: _kBorder),
             borderRadius: BorderRadius.circular(8),
@@ -2093,22 +1993,15 @@ class _SmallBtn extends StatelessWidget {
       );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Hero outline button (charcoal banner)
-// ─────────────────────────────────────────────────────────────────────────────
 class _HeroBtnOutline extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final VoidCallback onTap;
+  final String label; final IconData icon; final VoidCallback onTap;
   const _HeroBtnOutline(
       {required this.label, required this.icon, required this.onTap});
-
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
         child: Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           decoration: BoxDecoration(
             border: Border.all(color: Colors.white.withOpacity(0.2)),
             borderRadius: BorderRadius.circular(8),
@@ -2126,14 +2019,9 @@ class _HeroBtnOutline extends StatelessWidget {
       );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared card container
-// ─────────────────────────────────────────────────────────────────────────────
 class _WCard extends StatelessWidget {
-  final Widget child;
-  final EdgeInsetsGeometry? padding;
+  final Widget child; final EdgeInsetsGeometry? padding;
   const _WCard({required this.child, this.padding});
-
   @override
   Widget build(BuildContext context) => Container(
         decoration: BoxDecoration(
@@ -2142,8 +2030,7 @@ class _WCard extends StatelessWidget {
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.05),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
+              blurRadius: 8, offset: const Offset(0, 2),
             ),
           ],
         ),
@@ -2152,21 +2039,15 @@ class _WCard extends StatelessWidget {
       );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Rejection overlay (Stack-based, not a Dialog)
-// ─────────────────────────────────────────────────────────────────────────────
 class _RejectOverlay extends StatelessWidget {
   final Map<String, dynamic> pub;
   final TextEditingController ctrl;
   final bool processing;
   final VoidCallback onConfirm, onCancel;
-  const _RejectOverlay({
-    required this.pub,
-    required this.ctrl,
-    required this.processing,
-    required this.onConfirm,
-    required this.onCancel,
-  });
+  const _RejectOverlay(
+      {required this.pub, required this.ctrl,
+       required this.processing, required this.onConfirm,
+       required this.onCancel});
 
   @override
   Widget build(BuildContext context) => GestureDetector(
@@ -2247,12 +2128,10 @@ class _RejectOverlay extends StatelessWidget {
                           foregroundColor: const Color(0xFF1F2937),
                           side: const BorderSide(color: _kBorder),
                           shape: RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius.circular(8)),
-                          padding: const EdgeInsets.symmetric(
-                              vertical: 12),
-                          textStyle: const TextStyle(
-                              fontFamily: 'DM Sans'),
+                              borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          textStyle:
+                              const TextStyle(fontFamily: 'DM Sans'),
                         ),
                         child: const Text('Cancel'),
                       ),
@@ -2260,28 +2139,23 @@ class _RejectOverlay extends StatelessWidget {
                     const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton(
-                        onPressed:
-                            processing ? null : onConfirm,
+                        onPressed: processing ? null : onConfirm,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: _kRed,
                           foregroundColor: _kWhite,
                           elevation: 0,
                           shape: RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius.circular(8)),
-                          padding: const EdgeInsets.symmetric(
-                              vertical: 12),
+                              borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
                           textStyle: const TextStyle(
                               fontFamily: 'DM Sans',
                               fontWeight: FontWeight.w700),
                         ),
                         child: processing
                             ? const SizedBox(
-                                width: 18,
-                                height: 18,
+                                width: 18, height: 18,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: _kWhite))
+                                    strokeWidth: 2, color: _kWhite))
                             : const Text('Confirm Rejection'),
                       ),
                     ),
@@ -2294,41 +2168,28 @@ class _RejectOverlay extends StatelessWidget {
       );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Bottom nav item
-// ─────────────────────────────────────────────────────────────────────────────
 class _NavItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool active;
-  final VoidCallback? onTap;
-  const _NavItem({
-    required this.icon,
-    required this.label,
-    this.active = false,
-    this.onTap,
-  });
-
+  final IconData icon; final String label;
+  final bool active; final VoidCallback? onTap;
+  const _NavItem(
+      {required this.icon, required this.label,
+       this.active = false, this.onTap});
   @override
   Widget build(BuildContext context) {
     final c = active ? _kPrimary : Colors.grey;
     return GestureDetector(
       onTap: onTap,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, color: c, size: 22),
-          const SizedBox(height: 3),
-          Text(label,
-              style: TextStyle(
-                  fontFamily: 'DM Sans',
-                  fontSize: 11,
-                  color: c,
-                  fontWeight: active
-                      ? FontWeight.w700
-                      : FontWeight.normal)),
-        ],
-      ),
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(icon, color: c, size: 22),
+        const SizedBox(height: 3),
+        Text(label,
+            style: TextStyle(
+                fontFamily: 'DM Sans',
+                fontSize: 11,
+                color: c,
+                fontWeight:
+                    active ? FontWeight.w700 : FontWeight.normal)),
+      ]),
     );
   }
 }

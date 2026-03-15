@@ -1,103 +1,29 @@
-// Homepage matching Index.tsx structure with full widget implementations
+// lib/pages/homepage.dart
+//
+// FIX: Removed Scaffold + bottomNavigationBar from HomePage.
+// Shell (in main.dart) now owns the single Scaffold and bottom nav bar.
+// HomePage is just a scrollable body widget — no nav, no Scaffold.
+// This prevents the page from rendering its own navbar that routes
+// Profile → /profile instead of /settings.
+
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intercen_app/theme/app_colors.dart';
-
-// ── PAGE ────────────────────────────────────────────────
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            // Hero Section
-            _HeroSection(),
-            // Category Section
-            _CategorySection(),
-            // Promo Banner
-            _PromoBanner(),
-          ],
-        ),
-      ),
-      bottomNavigationBar: _bottomNav(context),
-    );
-  }
-
-  Widget _bottomNav(BuildContext context) => Container(
-        height: 64,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border(
-              top: BorderSide(color: Colors.grey.shade200)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 12,
-              offset: const Offset(0, -4),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _navItem(
-              icon: Icons.home,
-              label: 'Home',
-              active: true,
-              onTap: null, // already on home
-            ),
-            _navItem(
-              icon: Icons.menu_book_outlined,
-              label: 'Books',
-              active: false,
-              onTap: () => Navigator.pushNamed(context, '/books'),
-            ),
-            _navItem(
-              icon: Icons.shopping_cart_outlined,
-              label: 'Cart',
-              active: false,
-              onTap: () => Navigator.pushNamed(context, '/cart'),
-            ),
-            _navItem(
-              icon: Icons.person_outline,
-              label: 'Profile',
-              active: false,
-              onTap: () => Navigator.pushNamed(context, '/profile'),
-            ),
-          ],
-        ),
-      );
-
-  Widget _navItem({
-    required IconData icon,
-    required String label,
-    required bool active,
-    required VoidCallback? onTap,
-  }) {
-    final color = active ? const Color(0xFFB11226) : Colors.grey;
-    return GestureDetector(
-      onTap: onTap,
+    // ✅ No Scaffold, no bottomNavigationBar.
+    // Shell wraps this in a Scaffold and provides the nav bar.
+    return const SingleChildScrollView(
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: color, size: 22),
-          const SizedBox(height: 3),
-          Text(
-            label,
-            style: TextStyle(
-              fontFamily: 'DM Sans',
-              fontSize: 11,
-              color: color,
-              fontWeight:
-                  active ? FontWeight.w700 : FontWeight.normal,
-            ),
-          ),
+          _HeroSection(),
+          _CategorySection(),
+          _PromoBanner(),
         ],
       ),
     );
@@ -211,7 +137,6 @@ class _HeroSection extends StatelessWidget {
                 // CTA Buttons
                 Column(
                   children: [
-                    // Browse Books — filled red
                     SizedBox(
                       width: double.infinity,
                       height: 52,
@@ -246,12 +171,12 @@ class _HeroSection extends StatelessWidget {
 
                     const SizedBox(height: 12),
 
-                    // Publish With Us — outlined
                     SizedBox(
                       width: double.infinity,
                       height: 52,
                       child: OutlinedButton(
-                        onPressed: () {},
+                        onPressed: () =>
+                            Navigator.pushNamed(context, '/publish'),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: AppColors.primary,
                           side: const BorderSide(
@@ -278,14 +203,12 @@ class _HeroSection extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // Fast Delivery
                     _TrustBadge(
                       icon: Icons.local_shipping_outlined,
                       title: 'Fast Delivery',
                       subtitle: 'Across East Africa',
                     ),
                     const SizedBox(width: 24),
-                    // 500+ Titles
                     _TrustBadge(
                       icon: Icons.menu_book_outlined,
                       title: '500+ Titles',
@@ -486,8 +409,8 @@ class _CategoryCard extends StatelessWidget {
               ),
               errorWidget: (_, __, ___) => Container(
                 color: AppColors.muted,
-                child:
-                    const Icon(Icons.image, size: 32, color: AppColors.mutedForeground),
+                child: const Icon(Icons.image,
+                    size: 32, color: AppColors.mutedForeground),
               ),
             ),
 
@@ -590,7 +513,8 @@ class _PromoBanner extends StatelessWidget {
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.percent, size: 14, color: Colors.white),
+                          Icon(Icons.percent,
+                              size: 14, color: Colors.white),
                           SizedBox(width: 6),
                           Text(
                             'Limited Time Offer',
@@ -632,7 +556,7 @@ class _PromoBanner extends StatelessWidget {
 
                     const SizedBox(height: 20),
 
-                    // Shop the Sale button — gold
+                    // Shop the Sale button
                     SizedBox(
                       height: 48,
                       child: ElevatedButton.icon(

@@ -1,24 +1,10 @@
 // lib/pages/dashboard/author_dashboard.dart
 //
-// ── ROOT CAUSE FIX ───────────────────────────────────────────────────────────
-//  The previous CustomScrollView + SliverAppBar approach failed because
-//  AuthGuard returns its child directly with no bounded height constraints,
-//  which means the viewport always receives 0 ≤ h ≤ ∞.
-//
-//  THE FIX: Replace CustomScrollView + SliverAppBar with a standard Scaffold
-//  that has its own AppBar. The body uses a single ListView with
-//  physics: ClampingScrollPhysics() and shrinkWrap: false. A Scaffold always
-//  gives its body a fully bounded box so no descendant ever sees unbounded
-//  height. No SliverAppBar, no CustomScrollView, no NestedScrollView needed.
-//
-//  All other fixes retained:
-//  - No TabBar / TabBarView anywhere (custom pill row + switch dispatch)
-//  - All GridView / ListView use shrinkWrap + NeverScrollableScrollPhysics
-//    so they measure themselves and hand scrolling back up to the root ListView
-//  - Schema field: total_downloads (not download_count)
-//  - AppColors + PlayfairDisplay throughout
-//  - Bottom nav matches BooksPage exactly
-// ─────────────────────────────────────────────────────────────────────────────
+// FIX: Added initialTab support via WidgetsBinding.instance.addPostFrameCallback
+// in initState. When Settings navigates here with arguments: {'initialTab': n},
+// the dashboard opens on the correct tab:
+//   1 = Submissions  (My Submissions tile in Settings)
+//   3 = My Orders    (My Orders tile in Settings)
 
 import 'dart:convert';
 import 'dart:io';
@@ -35,7 +21,6 @@ const _kCard    = 12.0;
 const _kMaxBio  = 500;
 const _kMaxAvat = 5 * 1024 * 1024;
 
-// ─────────────────────────────────────────────────────────────────────────────
 class AuthorDashboardPage extends StatefulWidget {
   const AuthorDashboardPage({Key? key}) : super(key: key);
   @override
@@ -97,6 +82,20 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
     super.initState();
     _bioCtrl.addListener(() => setState(() {}));
     _loadAll();
+
+    // ✅ FIX: Read initialTab argument from Navigator route settings.
+    // ModalRoute.of(context) is null during initState so we must defer
+    // to addPostFrameCallback when the widget is fully in the route tree.
+    // Tab mapping:
+    //   0 = Overview | 1 = Submissions | 2 = My Works
+    //   3 = My Orders | 4 = Edit Profile
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final args = ModalRoute.of(context)?.settings.arguments;
+      if (args is Map<String, dynamic>) {
+        final t = args['initialTab'];
+        if (t is int && mounted) setState(() => _tab = t);
+      }
+    });
   }
 
   @override
@@ -239,20 +238,10 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
 
   // ─────────────────────────────────────────────────────────────────────────
   // BUILD
-  //
-  // Root widget is a plain Scaffold with a regular AppBar.
-  // A Scaffold ALWAYS gives its body fully bounded BoxConstraints —
-  // this permanently resolves the box.dart:2251 assertion regardless of
-  // what parent widget (AuthGuard, PageView, SafeArea, etc.) wraps this page.
-  //
-  // The body is a single root ListView. All child lists/grids use
-  // shrinkWrap + NeverScrollableScrollPhysics so they size themselves
-  // and delegate scrolling to this root ListView.
   // ─────────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     if (_loading) return _loadingScreen();
-
     final w = MediaQuery.of(context).size.width;
 
     return Scaffold(
@@ -280,8 +269,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               SizedBox(
-                width: 48,
-                height: 48,
+                width: 48, height: 48,
                 child: CircularProgressIndicator(
                   color: AppColors.primary,
                   strokeWidth: 3,
@@ -289,20 +277,18 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                 ),
               ),
               const SizedBox(height: 20),
-              const Text(
-                'Loading dashboard…',
-                style: TextStyle(
-                  color: AppColors.mutedForeground,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
+              const Text('Loading dashboard…',
+                  style: TextStyle(
+                    color: AppColors.mutedForeground,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                  )),
             ],
           ),
         ),
       );
 
-  // ── AppBar (regular, NOT SliverAppBar) ────────────────────────────────────
+  // ── AppBar ────────────────────────────────────────────────────────────────
   AppBar _appBar(double w) => AppBar(
         elevation: 0,
         backgroundColor: AppColors.background,
@@ -318,15 +304,13 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
           const Icon(Icons.person_outline,
               color: AppColors.primary, size: 20),
           const SizedBox(width: 8),
-          Text(
-            'Author Dashboard',
-            style: TextStyle(
-              color: AppColors.foreground,
-              fontWeight: FontWeight.w800,
-              fontFamily: 'PlayfairDisplay',
-              fontSize: w < 360 ? 16 : 18,
-            ),
-          ),
+          Text('Author Dashboard',
+              style: TextStyle(
+                color: AppColors.foreground,
+                fontWeight: FontWeight.w800,
+                fontFamily: 'PlayfairDisplay',
+                fontSize: w < 360 ? 16 : 18,
+              )),
         ]),
         actions: [
           IconButton(
@@ -336,8 +320,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                 Navigator.pushNamed(context, '/publish/submit'),
           ),
           IconButton(
-            icon:
-                const Icon(Icons.logout, color: AppColors.foreground),
+            icon: const Icon(Icons.logout, color: AppColors.foreground),
             onPressed: _signOut,
           ),
         ],
@@ -363,33 +346,27 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // breadcrumb
           Row(children: [
             GestureDetector(
               onTap: () => Navigator.pushNamedAndRemoveUntil(
                   context, '/home', (r) => false),
-              child: const Text(
-                'Home',
-                style: TextStyle(
-                    color: AppColors.mutedForeground, fontSize: 13),
-              ),
+              child: const Text('Home',
+                  style: TextStyle(
+                      color: AppColors.mutedForeground, fontSize: 13)),
             ),
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 4),
               child: Icon(Icons.chevron_right,
                   size: 14, color: AppColors.mutedForeground),
             ),
-            const Text(
-              'Author Portal',
-              style: TextStyle(
-                color: AppColors.foreground,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
+            const Text('Author Portal',
+                style: TextStyle(
+                  color: AppColors.foreground,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                )),
           ]),
           const SizedBox(height: 16),
-          // avatar + name row
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -398,24 +375,20 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                 child: Stack(children: [
                   CircleAvatar(
                     radius: wide ? 36 : 30,
-                    backgroundColor:
-                        AppColors.primary.withOpacity(0.1),
+                    backgroundColor: AppColors.primary.withOpacity(0.1),
                     backgroundImage: _avatarImg,
                     child: _avatarImg == null
-                        ? Text(
-                            initL,
+                        ? Text(initL,
                             style: TextStyle(
                               fontSize: wide ? 28 : 22,
                               fontWeight: FontWeight.bold,
                               color: AppColors.primary,
                               fontFamily: 'PlayfairDisplay',
-                            ),
-                          )
+                            ))
                         : null,
                   ),
                   Positioned(
-                    bottom: 0,
-                    right: 0,
+                    bottom: 0, right: 0,
                     child: CircleAvatar(
                       radius: 11,
                       backgroundColor: AppColors.primary,
@@ -432,8 +405,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   children: [
                     Wrap(
                       crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 8,
-                      runSpacing: 4,
+                      spacing: 8, runSpacing: 4,
                       children: [
                         Text(
                           _nameCtrl.text.isNotEmpty
@@ -453,8 +425,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                             color: AppColors.primary.withOpacity(0.1),
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
-                                color:
-                                    AppColors.primary.withOpacity(0.3)),
+                                color: AppColors.primary.withOpacity(0.3)),
                           ),
                           child: Text(
                             RoleService.instance.role.toUpperCase(),
@@ -471,8 +442,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                     const Text(
                       'Author Portal · Manage your works & submissions',
                       style: TextStyle(
-                          color: AppColors.mutedForeground,
-                          fontSize: 13),
+                          color: AppColors.mutedForeground, fontSize: 13),
                     ),
                   ],
                 ),
@@ -550,18 +520,16 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
     );
   }
 
-  // ── tab row (custom pill buttons — NO TabBar widget) ──────────────────────
+  // ── tab row ───────────────────────────────────────────────────────────────
   Widget _tabRow(double w) {
     final pad = _hp(w);
     final tabs = [
       (Icons.bar_chart_outlined, 'Overview'),
-      (
-        Icons.description_outlined,
-        'Submissions${_subs.isNotEmpty ? ' (${_subs.length})' : ''}',
-      ),
-      (Icons.book_outlined,         'My Works'),
-      (Icons.shopping_bag_outlined,  'My Orders'),
-      (Icons.person_outline,         'Edit Profile'),
+      (Icons.description_outlined,
+          'Submissions${_subs.isNotEmpty ? ' (${_subs.length})' : ''}'),
+      (Icons.book_outlined, 'My Works'),
+      (Icons.shopping_bag_outlined, 'My Orders'),
+      (Icons.person_outline, 'Edit Profile'),
     ];
 
     return Padding(
@@ -593,26 +561,22 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        tabs[i].$1,
-                        size: 15,
-                        color: active
-                            ? Colors.white
-                            : AppColors.mutedForeground,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        tabs[i].$2,
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: active
-                              ? FontWeight.w600
-                              : FontWeight.normal,
+                      Icon(tabs[i].$1,
+                          size: 15,
                           color: active
                               ? Colors.white
-                              : AppColors.mutedForeground,
-                        ),
-                      ),
+                              : AppColors.mutedForeground),
+                      const SizedBox(width: 6),
+                      Text(tabs[i].$2,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: active
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                            color: active
+                                ? Colors.white
+                                : AppColors.mutedForeground,
+                          )),
                     ],
                   ),
                 ),
@@ -624,25 +588,16 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
     );
   }
 
-  // ── tab body dispatcher ───────────────────────────────────────────────────
+  // ── tab body ──────────────────────────────────────────────────────────────
   Widget _tabBody(double w) {
     final pad = _hp(w);
     Widget body;
     switch (_tab) {
-      case 0:
-        body = _overview(w);
-        break;
-      case 1:
-        body = _subsTab();
-        break;
-      case 2:
-        body = _worksTab(w);
-        break;
-      case 3:
-        body = _ordersTab();
-        break;
-      default:
-        body = _profileTab(w);
+      case 0:  body = _overview(w);  break;
+      case 1:  body = _subsTab();    break;
+      case 2:  body = _worksTab(w);  break;
+      case 3:  body = _ordersTab();  break;
+      default: body = _profileTab(w);
     }
     return Padding(
       padding: EdgeInsets.fromLTRB(pad, 20, pad, 0),
@@ -656,11 +611,9 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
   Widget _overview(double w) {
     final pending  = _subs.where((s) => s['status'] == 'pending').length;
     final approved = _subs.where((s) => s['status'] == 'approved').length;
-    final under =
-        _subs.where((s) => s['status'] == 'under_review').length;
+    final under    = _subs.where((s) => s['status'] == 'under_review').length;
     final rejected = _subs.where((s) => s['status'] == 'rejected').length;
-    final published =
-        _works.where((x) => x['status'] == 'published').toList();
+    final published = _works.where((x) => x['status'] == 'published').toList();
 
     if (w >= 640) {
       return Row(
@@ -693,8 +646,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
             _Dot('Rejected',       r, const Color(0xFFEF4444)),
             const SizedBox(height: 20),
             SizedBox(
-              width: double.infinity,
-              height: 46,
+              width: double.infinity, height: 46,
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('Submit New Manuscript'),
@@ -715,8 +667,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                 const Color(0xFF16A34A)),
             const SizedBox(height: 16),
             if (pub.isEmpty)
-              _emptyInline(
-                  Icons.book_outlined, 'No published works yet.')
+              _emptyInline(Icons.book_outlined, 'No published works yet.')
             else
               ...pub.take(5).map(_topWorkRow),
           ],
@@ -736,8 +687,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
           ClipRRect(
             borderRadius: BorderRadius.circular(5),
             child: SizedBox(
-              width: 36,
-              height: 50,
+              width: 36, height: 50,
               child: _coverImg(w['cover_image_url'] as String?),
             ),
           ),
@@ -746,21 +696,18 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  w['title']?.toString() ?? 'Untitled',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w500, fontSize: 13),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                Text(w['title']?.toString() ?? 'Untitled',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w500, fontSize: 13),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 2),
                 Text(
-                  '${w['view_count'] ?? 0} views · '
-                  '${w['total_downloads'] ?? 0} downloads',
-                  style: const TextStyle(
-                      fontSize: 11,
-                      color: AppColors.mutedForeground),
-                ),
+                    '${w['view_count'] ?? 0} views · '
+                    '${w['total_downloads'] ?? 0} downloads',
+                    style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.mutedForeground)),
               ],
             ),
           ),
@@ -769,14 +716,12 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
               const Icon(Icons.star_rounded,
                   size: 12, color: AppColors.primary),
               const SizedBox(width: 2),
-              Text(
-                rating.toStringAsFixed(1),
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: AppColors.primary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              Text(rating.toStringAsFixed(1),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w600,
+                  )),
             ]),
         ]),
       ),
@@ -818,35 +763,29 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
+                      spacing: 8, runSpacing: 4,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Text(
-                          s['title']?.toString() ?? 'Untitled',
-                          style: const TextStyle(
-                            fontFamily: 'PlayfairDisplay',
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                            color: AppColors.foreground,
-                          ),
-                        ),
+                        Text(s['title']?.toString() ?? 'Untitled',
+                            style: const TextStyle(
+                              fontFamily: 'PlayfairDisplay',
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
+                              color: AppColors.foreground,
+                            )),
                         _Badge(status),
                       ],
                     ),
-                    if ((s['description'] as String? ?? '').isNotEmpty)
-                      ...[
+                    if ((s['description'] as String? ?? '').isNotEmpty) ...[
                       const SizedBox(height: 6),
-                      Text(
-                        s['description'] as String,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: AppColors.mutedForeground,
-                          fontSize: 13,
-                          height: 1.4,
-                        ),
-                      ),
+                      Text(s['description'] as String,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.mutedForeground,
+                            fontSize: 13,
+                            height: 1.4,
+                          )),
                     ],
                     const SizedBox(height: 8),
                     Wrap(spacing: 14, runSpacing: 4, children: [
@@ -867,8 +806,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                 ),
             ],
           ),
-          if ((s['rejection_feedback'] as String? ?? '').isNotEmpty)
-            ...[
+          if ((s['rejection_feedback'] as String? ?? '').isNotEmpty) ...[
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(12),
@@ -886,12 +824,9 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                       height: 1.5),
                   children: [
                     const TextSpan(
-                      text: 'Feedback: ',
-                      style:
-                          TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    TextSpan(
-                        text: s['rejection_feedback'] as String),
+                        text: 'Feedback: ',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                    TextSpan(text: s['rejection_feedback'] as String),
                   ],
                 ),
               ),
@@ -907,8 +842,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
   // ══════════════════════════════════════════════════════════════════════════
   Widget _worksTab(double w) {
     if (_works.isEmpty) {
-      return _emptyCard(
-          Icons.book_outlined, 'No content uploaded yet.');
+      return _emptyCard(Icons.book_outlined, 'No content uploaded yet.');
     }
     final cols = w >= 900 ? 3 : 2;
     return GridView.builder(
@@ -939,8 +873,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            height: 150,
-            width: double.infinity,
+            height: 150, width: double.infinity,
             child: _coverImg(w['cover_image_url'] as String?),
           ),
           Expanded(
@@ -954,16 +887,15 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                     children: [
                       Expanded(
                         child: Text(
-                          w['title']?.toString() ?? 'Untitled',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
-                            color: AppColors.foreground,
-                            height: 1.3,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                            w['title']?.toString() ?? 'Untitled',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                              color: AppColors.foreground,
+                              height: 1.3,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis),
                       ),
                       const SizedBox(width: 4),
                       _Badge(status, small: true),
@@ -978,30 +910,23 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                         '${w['total_downloads'] ?? 0}'),
                     if (rating > 0) ...[
                       const SizedBox(width: 8),
-                      _Metric(
-                        Icons.star_outline,
-                        rating.toStringAsFixed(1),
-                        color: const Color(0xFFD97706),
-                      ),
+                      _Metric(Icons.star_outline,
+                          rating.toStringAsFixed(1),
+                          color: const Color(0xFFD97706)),
                     ],
                   ]),
                   const Spacer(),
                   Row(children: [
                     Expanded(
-                      child: _miniBtn(
-                        'View',
-                        () => Navigator.pushNamed(
-                            context, '/book-detail',
-                            arguments: w),
-                      ),
+                      child: _miniBtn('View', () =>
+                          Navigator.pushNamed(context, '/book-detail',
+                              arguments: w)),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: _miniBtn(
-                        'Edit',
-                        () => Navigator.pushNamed(context,
-                            '/content/update/${w['id']}'),
-                      ),
+                      child: _miniBtn('Edit', () =>
+                          Navigator.pushNamed(context,
+                              '/content/update/${w['id']}')),
                     ),
                   ]),
                 ],
@@ -1023,15 +948,13 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
           children: [
             const Padding(
               padding: EdgeInsets.all(20),
-              child: Text(
-                'Purchase History',
-                style: TextStyle(
-                  fontFamily: 'PlayfairDisplay',
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.foreground,
-                ),
-              ),
+              child: Text('Purchase History',
+                  style: TextStyle(
+                    fontFamily: 'PlayfairDisplay',
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.foreground,
+                  )),
             ),
             Divider(height: 1, color: Colors.grey.shade200),
             if (_orders.isEmpty)
@@ -1041,30 +964,23 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        Icons.shopping_bag_outlined,
-                        size: 48,
-                        color:
-                            AppColors.mutedForeground.withOpacity(0.3),
-                      ),
+                      Icon(Icons.shopping_bag_outlined,
+                          size: 48,
+                          color: AppColors.mutedForeground.withOpacity(0.3)),
                       const SizedBox(height: 12),
-                      const Text(
-                        'No orders yet.',
-                        style: TextStyle(
-                            color: AppColors.mutedForeground,
-                            fontSize: 14),
-                      ),
+                      const Text('No orders yet.',
+                          style: TextStyle(
+                              color: AppColors.mutedForeground,
+                              fontSize: 14)),
                       const SizedBox(height: 8),
                       TextButton(
                         onPressed: () =>
                             Navigator.pushNamed(context, '/books'),
-                        child: const Text(
-                          'Browse books',
-                          style: TextStyle(
-                            color: AppColors.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                        child: const Text('Browse books',
+                            style: TextStyle(
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w600,
+                            )),
                       ),
                     ],
                   ),
@@ -1092,29 +1008,23 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
-            Text(
-              '#${o['order_number'] ?? ''}',
-              style: const TextStyle(
-                fontWeight: FontWeight.w600,
-                fontFamily: 'monospace',
-                color: AppColors.foreground,
-              ),
-            ),
+            Text('#${o['order_number'] ?? ''}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'monospace',
+                  color: AppColors.foreground,
+                )),
             const SizedBox(width: 10),
-            Text(
-              _date(o['created_at']),
-              style: const TextStyle(
-                  color: AppColors.mutedForeground, fontSize: 12),
-            ),
+            Text(_date(o['created_at']),
+                style: const TextStyle(
+                    color: AppColors.mutedForeground, fontSize: 12)),
             const Spacer(),
             _Badge(o['payment_status'] ?? '', small: true),
             const SizedBox(width: 8),
-            Text(
-              'KES ${_price(o['total_price'])}',
-              style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.foreground),
-            ),
+            Text('KES ${_price(o['total_price'])}',
+                style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.foreground)),
           ]),
           const SizedBox(height: 10),
           ...items.map<Widget>((item) {
@@ -1123,18 +1033,15 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Row(children: [
                 Expanded(
-                  child: Text(
-                    c?['title']?.toString() ?? 'Content',
-                    style: const TextStyle(
-                        color: AppColors.mutedForeground,
-                        fontSize: 13),
-                  ),
+                  child: Text(c?['title']?.toString() ?? 'Content',
+                      style: const TextStyle(
+                          color: AppColors.mutedForeground,
+                          fontSize: 13)),
                 ),
                 if (isPaid)
                   TextButton.icon(
                     onPressed: () => Navigator.pushNamed(
-                        context, '/book-detail',
-                        arguments: c),
+                        context, '/book-detail', arguments: c),
                     icon: const Icon(Icons.visibility_outlined,
                         size: 13),
                     label: const Text('Access',
@@ -1160,25 +1067,19 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Edit Profile',
-              style: TextStyle(
-                fontFamily: 'PlayfairDisplay',
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-                color: AppColors.foreground,
-              ),
-            ),
+            const Text('Edit Profile',
+                style: TextStyle(
+                  fontFamily: 'PlayfairDisplay',
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.foreground,
+                )),
             const SizedBox(height: 24),
-
-            // avatar picker
-            const Text(
-              'Profile Picture',
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.foreground),
-            ),
+            const Text('Profile Picture',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.foreground)),
             const SizedBox(height: 12),
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
@@ -1188,8 +1089,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   child: Stack(children: [
                     CircleAvatar(
                       radius: 44,
-                      backgroundColor:
-                          AppColors.primary.withOpacity(0.1),
+                      backgroundColor: AppColors.primary.withOpacity(0.1),
                       backgroundImage: _avatarImg,
                       child: _avatarImg == null
                           ? Text(
@@ -1200,13 +1100,11 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                                 fontSize: 36,
                                 color: AppColors.primary,
                                 fontFamily: 'PlayfairDisplay',
-                              ),
-                            )
+                              ))
                           : null,
                     ),
                     Positioned(
-                      bottom: 4,
-                      right: 4,
+                      bottom: 4, right: 4,
                       child: CircleAvatar(
                         radius: 14,
                         backgroundColor: AppColors.primary,
@@ -1221,32 +1119,26 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     OutlinedButton.icon(
-                      icon:
-                          const Icon(Icons.upload_file, size: 15),
+                      icon: const Icon(Icons.upload_file, size: 15),
                       label: const Text('Change Photo'),
                       onPressed: _pickAvatar,
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.foreground,
-                        side:
-                            BorderSide(color: Colors.grey.shade300),
+                        side: BorderSide(color: Colors.grey.shade300),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8)),
                       ),
                     ),
                     const SizedBox(height: 5),
-                    const Text(
-                      'PNG, JPG, WebP · max 5 MB',
-                      style: TextStyle(
-                          fontSize: 11,
-                          color: AppColors.mutedForeground),
-                    ),
+                    const Text('PNG, JPG, WebP · max 5 MB',
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.mutedForeground)),
                   ],
                 ),
               ],
             ),
             const SizedBox(height: 28),
-
-            // form fields
             LayoutBuilder(builder: (_, c) {
               final wide = c.maxWidth >= 500;
               return Column(
@@ -1286,8 +1178,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                         text: RoleService.instance.role),
                     readOnly: true,
                     style: const TextStyle(
-                        color: AppColors.mutedForeground,
-                        fontSize: 14),
+                        color: AppColors.mutedForeground, fontSize: 14),
                     decoration: InputDecoration(
                       border: _border(),
                       enabledBorder: _border(),
@@ -1296,8 +1187,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 14, vertical: 12),
                       suffixIcon: const Icon(Icons.lock_outline,
-                          size: 15,
-                          color: AppColors.mutedForeground),
+                          size: 15, color: AppColors.mutedForeground),
                       helperText: 'Role is assigned by admin.',
                       helperStyle: const TextStyle(
                           fontSize: 11,
@@ -1308,26 +1198,21 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   Row(children: [
                     _lbl('Bio'),
                     const Spacer(),
-                    Text(
-                      '${_bioCtrl.text.length}/$_kMaxBio',
-                      style: const TextStyle(
-                          fontSize: 11,
-                          color: AppColors.mutedForeground),
-                    ),
+                    Text('${_bioCtrl.text.length}/$_kMaxBio',
+                        style: const TextStyle(
+                            fontSize: 11,
+                            color: AppColors.mutedForeground)),
                   ]),
                   const SizedBox(height: 6),
                   TextField(
                     controller: _bioCtrl,
                     maxLines: 5,
                     maxLength: _kMaxBio,
-                    buildCounter: (_,
-                            {required currentLength,
-                            required isFocused,
-                            maxLength}) =>
+                    buildCounter: (_, {required currentLength,
+                            required isFocused, maxLength}) =>
                         null,
                     style: const TextStyle(
-                        fontSize: 14,
-                        color: AppColors.foreground),
+                        fontSize: 14, color: AppColors.foreground),
                     decoration: InputDecoration(
                       border: _border(),
                       enabledBorder: _border(),
@@ -1349,23 +1234,17 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
               );
             }),
             const SizedBox(height: 28),
-
-            // action buttons
             Wrap(spacing: 12, runSpacing: 12, children: [
               SizedBox(
                 height: 46,
                 child: ElevatedButton.icon(
                   icon: _saving
                       ? const SizedBox(
-                          width: 16,
-                          height: 16,
+                          width: 16, height: 16,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white),
-                        )
+                              strokeWidth: 2, color: Colors.white))
                       : const Icon(Icons.save_outlined, size: 16),
-                  label:
-                      Text(_saving ? 'Saving…' : 'Save Changes'),
+                  label: Text(_saving ? 'Saving…' : 'Save Changes'),
                   style: _primaryBtn(),
                   onPressed: _saving ? null : _save,
                 ),
@@ -1373,13 +1252,11 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
               SizedBox(
                 height: 46,
                 child: OutlinedButton(
-                  onPressed: _saving
-                      ? null
-                      : () => Navigator.maybePop(context),
+                  onPressed:
+                      _saving ? null : () => Navigator.maybePop(context),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.foreground,
-                    side:
-                        BorderSide(color: Colors.grey.shade300),
+                    side: BorderSide(color: Colors.grey.shade300),
                     padding: const EdgeInsets.symmetric(
                         horizontal: 20, vertical: 12),
                     shape: RoundedRectangleBorder(
@@ -1393,9 +1270,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
         ),
       );
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // BOTTOM NAV  (identical to BooksPage)
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── bottom nav ────────────────────────────────────────────────────────────
   Widget _bottomNav() => Container(
         height: 64,
         decoration: BoxDecoration(
@@ -1434,15 +1309,9 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
         ),
       );
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Small helpers
-  // ─────────────────────────────────────────────────────────────────────────
-  Widget _field(
-    TextEditingController ctrl,
-    String label, {
-    int lines = 1,
-    String? hint,
-  }) =>
+  // ── small helpers ─────────────────────────────────────────────────────────
+  Widget _field(TextEditingController ctrl, String label,
+      {int lines = 1, String? hint}) =>
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1482,20 +1351,16 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
           ..removeLast(),
       );
 
-  Widget _lbl(String t) => Text(
-        t,
-        style: const TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: AppColors.foreground,
-        ),
-      );
+  Widget _lbl(String t) => Text(t,
+      style: const TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
+        color: AppColors.foreground,
+      ));
 
-  Widget _meta(String t) => Text(
-        t,
-        style: const TextStyle(
-            fontSize: 12, color: AppColors.mutedForeground),
-      );
+  Widget _meta(String t) => Text(t,
+      style: const TextStyle(
+          fontSize: 12, color: AppColors.mutedForeground));
 
   Widget _miniBtn(String label, VoidCallback fn) => OutlinedButton(
         onPressed: fn,
@@ -1524,18 +1389,13 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
             const SizedBox(height: 10),
             Text(msg,
                 style: const TextStyle(
-                    color: AppColors.mutedForeground,
-                    fontSize: 14)),
+                    color: AppColors.mutedForeground, fontSize: 14)),
           ]),
         ),
       );
 
-  Widget _emptyCard(
-    IconData icon,
-    String msg, {
-    String? action,
-    VoidCallback? onTap,
-  }) =>
+  Widget _emptyCard(IconData icon, String msg,
+      {String? action, VoidCallback? onTap}) =>
       _Card(
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 48),
@@ -1544,22 +1404,19 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 72,
-                  height: 72,
+                  width: 72, height: 72,
                   decoration: BoxDecoration(
                     color: AppColors.muted,
                     borderRadius: BorderRadius.circular(36),
                   ),
                   child: Icon(icon,
                       size: 36,
-                      color: AppColors.mutedForeground
-                          .withOpacity(0.5)),
+                      color: AppColors.mutedForeground.withOpacity(0.5)),
                 ),
                 const SizedBox(height: 16),
                 Text(msg,
                     style: const TextStyle(
-                        color: AppColors.mutedForeground,
-                        fontSize: 14)),
+                        color: AppColors.mutedForeground, fontSize: 14)),
                 if (action != null && onTap != null) ...[
                   const SizedBox(height: 20),
                   ElevatedButton.icon(
@@ -1584,8 +1441,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
           color: AppColors.muted,
           child: const Center(
             child: SizedBox(
-              width: 20,
-              height: 20,
+              width: 20, height: 20,
               child: CircularProgressIndicator(
                   strokeWidth: 2,
                   color: AppColors.mutedForeground),
@@ -1628,9 +1484,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
     try {
       final d = DateTime.parse(raw as String).toLocal();
       return '${d.day}/${d.month}/${d.year}';
-    } catch (_) {
-      return '';
-    }
+    } catch (_) { return ''; }
   }
 
   String _price(dynamic raw) {
@@ -1646,22 +1500,13 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stat card
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Stat card ──────────────────────────────────────────────────────────────
 class _SC extends StatelessWidget {
   final String label, value;
   final IconData icon;
   final Color color, bg;
-
-  const _SC({
-    required this.label,
-    required this.value,
-    required this.icon,
-    required this.color,
-    required this.bg,
-    super.key,
-  });
+  const _SC({required this.label, required this.value,
+      required this.icon, required this.color, required this.bg, Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) => Card(
@@ -1674,11 +1519,9 @@ class _SC extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           child: Row(children: [
             Container(
-              width: 40,
-              height: 40,
+              width: 40, height: 40,
               decoration: BoxDecoration(
-                  color: bg,
-                  borderRadius: BorderRadius.circular(10)),
+                  color: bg, borderRadius: BorderRadius.circular(10)),
               child: Icon(icon, color: color, size: 20),
             ),
             const SizedBox(width: 12),
@@ -1690,22 +1533,18 @@ class _SC extends StatelessWidget {
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     alignment: Alignment.centerLeft,
-                    child: Text(
-                      value,
+                    child: Text(value,
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.foreground,
+                        )),
+                  ),
+                  Text(label,
                       style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.foreground,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    label,
-                    style: const TextStyle(
-                        fontSize: 11,
-                        color: AppColors.mutedForeground),
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                          fontSize: 11,
+                          color: AppColors.mutedForeground),
+                      overflow: TextOverflow.ellipsis),
                 ],
               ),
             ),
@@ -1714,68 +1553,50 @@ class _SC extends StatelessWidget {
       );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Status badge
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Status badge ───────────────────────────────────────────────────────────
 class _Badge extends StatelessWidget {
   final String status;
   final bool small;
-
   const _Badge(this.status, {this.small = false});
 
   @override
   Widget build(BuildContext context) {
     Color bg, fg, bdr;
     switch (status) {
-      case 'approved':
-      case 'published':
-      case 'paid':
-        bg  = const Color(0xFFF0FDF4);
-        fg  = const Color(0xFF16A34A);
-        bdr = const Color(0xFFBBF7D0);
-        break;
+      case 'approved': case 'published': case 'paid':
+        bg = const Color(0xFFF0FDF4); fg = const Color(0xFF16A34A);
+        bdr = const Color(0xFFBBF7D0); break;
       case 'rejected':
-        bg  = const Color(0xFFFEF2F2);
-        fg  = const Color(0xFFDC2626);
-        bdr = const Color(0xFFFECACA);
-        break;
+        bg = const Color(0xFFFEF2F2); fg = const Color(0xFFDC2626);
+        bdr = const Color(0xFFFECACA); break;
       case 'under_review':
-        bg  = const Color(0xFFEFF6FF);
-        fg  = const Color(0xFF2563EB);
-        bdr = const Color(0xFFBFDBFE);
-        break;
+        bg = const Color(0xFFEFF6FF); fg = const Color(0xFF2563EB);
+        bdr = const Color(0xFFBFDBFE); break;
       default:
-        bg  = const Color(0xFFFFFBEB);
-        fg  = const Color(0xFFD97706);
+        bg = const Color(0xFFFFFBEB); fg = const Color(0xFFD97706);
         bdr = const Color(0xFFFDE68A);
     }
     return Container(
       padding: EdgeInsets.symmetric(
           horizontal: small ? 7 : 10, vertical: small ? 2 : 4),
       decoration: BoxDecoration(
-        color: bg,
-        border: Border.all(color: bdr),
+        color: bg, border: Border.all(color: bdr),
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Text(
-        status,
-        style: TextStyle(
-          fontSize: small ? 10 : 12,
-          fontWeight: FontWeight.w600,
-          color: fg,
-        ),
-      ),
+      child: Text(status,
+          style: TextStyle(
+            fontSize: small ? 10 : 12,
+            fontWeight: FontWeight.w600,
+            color: fg,
+          )),
     );
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared card container
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Card container ─────────────────────────────────────────────────────────
 class _Card extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry? padding;
-
   const _Card({required this.child, this.padding});
 
   @override
@@ -1786,8 +1607,7 @@ class _Card extends StatelessWidget {
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.06),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
+              blurRadius: 8, offset: const Offset(0, 2),
             ),
           ],
         ),
@@ -1796,130 +1616,80 @@ class _Card extends StatelessWidget {
       );
 }
 
-// Card header row
 class _CardHdr extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final Color color;
-
+  final IconData icon; final String title; final Color color;
   const _CardHdr(this.icon, this.title, this.color);
-
   @override
   Widget build(BuildContext context) => Row(children: [
         Icon(icon, color: color, size: 18),
         const SizedBox(width: 8),
-        Text(
-          title,
-          style: const TextStyle(
-            fontFamily: 'PlayfairDisplay',
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: AppColors.foreground,
-          ),
-        ),
+        Text(title,
+            style: const TextStyle(
+              fontFamily: 'PlayfairDisplay',
+              fontSize: 16, fontWeight: FontWeight.w700,
+              color: AppColors.foreground,
+            )),
       ]);
 }
 
-// Status dot row
 class _Dot extends StatelessWidget {
-  final String label;
-  final int count;
-  final Color color;
-
+  final String label; final int count; final Color color;
   const _Dot(this.label, this.count, this.color);
-
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Row(children: [
-          Container(
-            width: 10,
-            height: 10,
-            decoration:
-                BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
+          Container(width: 10, height: 10,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
           const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              label,
+          Expanded(child: Text(label,
               style: const TextStyle(
-                  color: AppColors.mutedForeground, fontSize: 14),
-            ),
-          ),
-          Text(
-            '$count',
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 14,
-              color: AppColors.foreground,
-            ),
-          ),
+                  color: AppColors.mutedForeground, fontSize: 14))),
+          Text('$count',
+              style: const TextStyle(
+                fontWeight: FontWeight.w700, fontSize: 14,
+                color: AppColors.foreground,
+              )),
         ]),
       );
 }
 
-// Mini metric chip (icon + value)
 class _Metric extends StatelessWidget {
-  final IconData icon;
-  final String value;
-  final Color color;
-
+  final IconData icon; final String value; final Color color;
   const _Metric(this.icon, this.value,
       {this.color = AppColors.mutedForeground});
-
   @override
   Widget build(BuildContext context) => Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 12, color: color),
           const SizedBox(width: 3),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 11,
-              color: color,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
+          Text(value,
+              style: TextStyle(
+                fontSize: 11, color: color, fontWeight: FontWeight.w500)),
         ],
       );
 }
 
-// Bottom nav item
 class _Nav extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool active;
-  final VoidCallback? onTap;
-
-  const _Nav({
-    required this.icon,
-    required this.label,
-    this.active = false,
-    this.onTap,
-  });
-
+  final IconData icon; final String label;
+  final bool active; final VoidCallback? onTap;
+  const _Nav({required this.icon, required this.label,
+      this.active = false, this.onTap});
   @override
   Widget build(BuildContext context) {
     final c = active ? AppColors.primary : Colors.grey;
     return GestureDetector(
       onTap: onTap,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, color: c, size: 22),
-          const SizedBox(height: 3),
-          Text(
-            label,
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(icon, color: c, size: 22),
+        const SizedBox(height: 3),
+        Text(label,
             style: TextStyle(
-              fontSize: 11,
-              color: c,
-              fontWeight:
-                  active ? FontWeight.w700 : FontWeight.normal,
-            ),
-          ),
-        ],
-      ),
+              fontSize: 11, color: c,
+              fontWeight: active ? FontWeight.w700 : FontWeight.normal,
+            )),
+      ]),
     );
   }
 }

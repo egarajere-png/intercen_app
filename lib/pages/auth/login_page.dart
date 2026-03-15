@@ -1,5 +1,4 @@
 // lib/pages/auth/login_page.dart
-// Place at: lib/pages/auth/login_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -18,28 +17,15 @@ class _LoginPageState extends State<LoginPage> {
   final _emailCtrl    = TextEditingController();
   final _passwordCtrl = TextEditingController();
 
-  bool _keepLoggedIn  = false;
-  bool _isLoading     = false;
-  bool _showPassword  = false;
+  bool _keepLoggedIn = false;
+  bool _isLoading    = false;
+  bool _showPassword = false;
 
   @override
   void dispose() {
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
-  }
-
-  /// Maps a role string to the correct named dashboard route.
-  String _dashboardRoute(String role) {
-    switch (role) {
-      case 'admin':
-        return '/dashboard/admin';
-      case 'author':
-      case 'publisher':
-        return '/dashboard/author';
-      default:
-        return '/dashboard/reader';
-    }
   }
 
   Future<void> _handleLogin() async {
@@ -58,10 +44,11 @@ class _LoginPageState extends State<LoginPage> {
 
       if (res.user == null) throw Exception('Sign in failed');
 
-      // Resolve role before navigating
-      final role = await RoleService.instance.load();
+      // Load and cache the role — still needed by the rest of the app
+      // (SettingsPage, dashboards, etc.) but no longer used for routing.
+      await RoleService.instance.load();
 
-      // Check if profile is complete
+      // Check if profile setup is complete
       final profile = await Supabase.instance.client
           .from('profiles')
           .select('full_name, onboarded')
@@ -72,12 +59,20 @@ class _LoginPageState extends State<LoginPage> {
 
       final isOnboarded = profile?['onboarded'] == true ||
           (profile?['full_name'] != null &&
-           (profile!['full_name'] as String).isNotEmpty);
+              (profile!['full_name'] as String).isNotEmpty);
 
       if (!isOnboarded) {
+        // First-time user — complete their profile first
         Navigator.pushReplacementNamed(context, '/profile-setup');
       } else {
-        Navigator.pushReplacementNamed(context, _dashboardRoute(role));
+        // ✅ FIX: Always go to /home (Shell with correct navbar).
+        //    Previously this called _dashboardRoute(role) which pushed
+        //    /dashboard/author, /dashboard/admin, or /dashboard/reader —
+        //    pages that each have their own Scaffold + wrong navbar.
+        //    Now every user lands on the same root page with the
+        //    consistent Home / Books / Cart / Profile bottom nav.
+        //    Dashboards are reachable from Settings → "My Dashboard".
+        Navigator.pushReplacementNamed(context, '/home');
       }
     } on AuthException catch (e) {
       _snack(e.message);
@@ -94,7 +89,8 @@ class _LoginPageState extends State<LoginPage> {
       content: Text(msg, style: const TextStyle(fontFamily: 'DM Sans')),
       backgroundColor: const Color(0xFF2D2D2D),
       behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
     ));
   }
 
@@ -110,7 +106,8 @@ class _LoginPageState extends State<LoginPage> {
         ),
         Expanded(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -192,7 +189,8 @@ class _LoginPageState extends State<LoginPage> {
                     child: buildSocialButton(
                       icon: FontAwesomeIcons.google,
                       label: 'Google',
-                      onPressed: () => _snack('Google Sign-In coming soon!'),
+                      onPressed: () =>
+                          _snack('Google Sign-In coming soon!'),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -200,18 +198,22 @@ class _LoginPageState extends State<LoginPage> {
                     child: buildSocialButton(
                       icon: FontAwesomeIcons.apple,
                       label: 'Apple',
-                      onPressed: () => _snack('Apple Sign-In coming soon!'),
+                      onPressed: () =>
+                          _snack('Apple Sign-In coming soon!'),
                     ),
                   ),
                 ]),
                 const SizedBox(height: 32),
 
-                Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
                   const Text("Don't have an account? ",
                       style: TextStyle(
                           color: Color(0xFF666666), fontSize: 14)),
                   GestureDetector(
-                    onTap: () => Navigator.pushNamed(context, '/signup'),
+                    onTap: () =>
+                        Navigator.pushNamed(context, '/signup'),
                     child: const Text('Sign up',
                         style: TextStyle(
                             fontWeight: FontWeight.bold,

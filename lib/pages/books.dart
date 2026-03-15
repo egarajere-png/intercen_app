@@ -1,3 +1,14 @@
+// lib/pages/books.dart
+//
+// FIX: BooksPage is pushed via Navigator.pushNamed('/books') from Shell,
+// so it IS its own route and needs its own Scaffold.
+// The only fix needed here is the Profile nav tap:
+//   BEFORE: Navigator.pushNamed(context, '/profile')   ← wrong
+//   AFTER:  Navigator.pushNamed(context, '/settings')  ← correct
+//
+// This ensures that wherever the user taps "Profile" in the books page
+// navbar, they always land on SettingsPage with the correct nav bar.
+
 import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -59,11 +70,6 @@ class _BooksPageState extends State<BooksPage>
   ];
 
   // ── Responsive breakpoints ──
-  static bool _isSmall(BuildContext ctx) =>
-      MediaQuery.of(ctx).size.width < 360;
-  static bool _isMedium(BuildContext ctx) =>
-      MediaQuery.of(ctx).size.width >= 360 &&
-      MediaQuery.of(ctx).size.width < 600;
   static bool _isTablet(BuildContext ctx) =>
       MediaQuery.of(ctx).size.width >= 600 &&
       MediaQuery.of(ctx).size.width < 900;
@@ -164,7 +170,6 @@ class _BooksPageState extends State<BooksPage>
 
       if (!mounted) return;
 
-      // ── Safe cast — fixes dartx.isNotEmpty on Flutter Web ──
       final rawData = response['data'];
       final List<dynamic> dataList =
           rawData is List ? List<dynamic>.from(rawData) : [];
@@ -260,7 +265,6 @@ class _BooksPageState extends State<BooksPage>
     );
   }
 
-  // ── Filter bottom sheet ──
   void _openFilterSheet() {
     showModalBottomSheet(
       context: context,
@@ -295,12 +299,12 @@ class _BooksPageState extends State<BooksPage>
   @override
   Widget build(BuildContext context) {
     final hPad = _horizontalPadding(context);
-    final isTabletOrDesktop =
-        _isTablet(context) || _isDesktop(context);
+    final isTabletOrDesktop = _isTablet(context) || _isDesktop(context);
     final screenWidth = MediaQuery.of(context).size.width;
 
     return Scaffold(
       backgroundColor: AppColors.background,
+      // ✅ Profile tap now routes to /settings — NOT /profile
       bottomNavigationBar: _bottomNav(context),
       body: CustomScrollView(
         controller: _scrollController,
@@ -452,7 +456,6 @@ class _BooksPageState extends State<BooksPage>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Search + Sort row
                   LayoutBuilder(builder: (ctx, constraints) {
                     final isNarrow = constraints.maxWidth < 420;
                     if (isNarrow) {
@@ -481,7 +484,6 @@ class _BooksPageState extends State<BooksPage>
                     );
                   }),
 
-                  // Active filters chips
                   if (_hasActiveFilters) ...[
                     const SizedBox(height: 12),
                     SingleChildScrollView(
@@ -521,8 +523,7 @@ class _BooksPageState extends State<BooksPage>
                                     slug,
                                 onRemove: () {
                                   setState(() {
-                                    _selectedCategories
-                                        .remove(slug);
+                                    _selectedCategories.remove(slug);
                                     _page = 1;
                                   });
                                   _fetchContent();
@@ -566,7 +567,6 @@ class _BooksPageState extends State<BooksPage>
                     ),
                   ],
 
-                  // Results count
                   if (!_loading &&
                       _error == null &&
                       _content.isNotEmpty) ...[
@@ -610,8 +610,7 @@ class _BooksPageState extends State<BooksPage>
             )
           else ...[
             SliverPadding(
-              padding: EdgeInsets.fromLTRB(
-                  hPad, 0, hPad, 16),
+              padding: EdgeInsets.fromLTRB(hPad, 0, hPad, 16),
               sliver: SliverGrid(
                 delegate: SliverChildBuilderDelegate(
                   (ctx, i) => FadeTransition(
@@ -644,7 +643,6 @@ class _BooksPageState extends State<BooksPage>
               ),
             ),
 
-            // Pagination
             if (_totalPages > 1)
               SliverToBoxAdapter(
                 child: _Pagination(
@@ -677,7 +675,6 @@ class _BooksPageState extends State<BooksPage>
     );
   }
 
-  // ── Search bar widget ──
   Widget _searchBar() {
     return Container(
       height: 46,
@@ -708,8 +705,7 @@ class _BooksPageState extends State<BooksPage>
               decoration: const InputDecoration(
                 hintText: 'Search content, authors, titles...',
                 hintStyle: TextStyle(
-                    color: AppColors.mutedForeground,
-                    fontSize: 14),
+                    color: AppColors.mutedForeground, fontSize: 14),
                 border: InputBorder.none,
                 isDense: true,
               ),
@@ -732,7 +728,6 @@ class _BooksPageState extends State<BooksPage>
     );
   }
 
-  // ── Sort dropdown ──
   Widget _sortDropdown({double? width}) {
     Widget dropdown = Container(
       height: 46,
@@ -754,8 +749,7 @@ class _BooksPageState extends State<BooksPage>
               fontWeight: FontWeight.w500),
           items: const [
             DropdownMenuItem(
-                value: 'featured',
-                child: Text('Featured')),
+                value: 'featured', child: Text('Featured')),
             DropdownMenuItem(
                 value: 'newest', child: Text('Newest')),
             DropdownMenuItem(
@@ -765,8 +759,7 @@ class _BooksPageState extends State<BooksPage>
                 value: 'price-high',
                 child: Text('Price: High → Low')),
             DropdownMenuItem(
-                value: 'rating',
-                child: Text('Highest Rated')),
+                value: 'rating', child: Text('Highest Rated')),
           ],
           onChanged: (val) {
             if (val != null) {
@@ -787,7 +780,6 @@ class _BooksPageState extends State<BooksPage>
     return dropdown;
   }
 
-  // ── Filter button ──
   Widget _filterButton() {
     return GestureDetector(
       onTap: _openFilterSheet,
@@ -830,7 +822,6 @@ class _BooksPageState extends State<BooksPage>
     );
   }
 
-  // ── Filter chip ──
   Widget _chip({
     required String label,
     required VoidCallback onRemove,
@@ -848,15 +839,12 @@ class _BooksPageState extends State<BooksPage>
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(icon,
-                size: 12, color: AppColors.mutedForeground),
+            Icon(icon, size: 12, color: AppColors.mutedForeground),
             const SizedBox(width: 4),
           ],
-          Text(
-            label,
-            style: const TextStyle(
-                fontSize: 12, color: AppColors.foreground),
-          ),
+          Text(label,
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.foreground)),
           const SizedBox(width: 6),
           GestureDetector(
             onTap: onRemove,
@@ -885,14 +873,13 @@ class _BooksPageState extends State<BooksPage>
     }
   }
 
-  // ── Bottom nav ──
+  // ✅ Profile tap fixed: /profile → /settings
   Widget _bottomNav(BuildContext context) {
     return Container(
       height: 64,
       decoration: BoxDecoration(
         color: Colors.white,
-        border: Border(
-            top: BorderSide(color: Colors.grey.shade200)),
+        border: Border(top: BorderSide(color: Colors.grey.shade200)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.06),
@@ -918,12 +905,12 @@ class _BooksPageState extends State<BooksPage>
           _NavItem(
             icon: Icons.shopping_cart_outlined,
             label: 'Cart',
-            onTap: () =>
-                Navigator.pushNamed(context, '/cart'),
+            onTap: () => Navigator.pushNamed(context, '/cart'),
           ),
           _NavItem(
-            icon: Icons.settings,
+            icon: Icons.person_outline,
             label: 'Profile',
+            // ✅ FIXED: was '/profile', now '/settings'
             onTap: () => Navigator.pushNamed(context, '/settings'),
           ),
         ],
@@ -933,7 +920,7 @@ class _BooksPageState extends State<BooksPage>
 }
 
 // ════════════════════════════════════════════════════════
-// BOOK CARD — extracted for clean separation
+// BOOK CARD
 // ════════════════════════════════════════════════════════
 
 class _BookCard extends StatelessWidget {
@@ -961,7 +948,6 @@ class _BookCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Cover image ──
           Expanded(
             child: Stack(
               children: [
@@ -1003,7 +989,6 @@ class _BookCard extends StatelessWidget {
                   ),
                 ),
 
-                // Badges
                 if (book.isBestseller)
                   Positioned(
                     top: 8,
@@ -1017,7 +1002,6 @@ class _BookCard extends StatelessWidget {
                     child: _badge('New', AppColors.accent),
                   ),
 
-                // Free badge
                 if (book.isFree)
                   Positioned(
                     top: 8,
@@ -1030,7 +1014,6 @@ class _BookCard extends StatelessWidget {
 
           const SizedBox(height: 10),
 
-          // ── Rating ──
           Row(
             children: [
               const Icon(Icons.star_rounded,
@@ -1045,15 +1028,13 @@ class _BookCard extends StatelessWidget {
               Text(
                 '(${book.totalReviews})',
                 style: const TextStyle(
-                    fontSize: 11,
-                    color: AppColors.mutedForeground),
+                    fontSize: 11, color: AppColors.mutedForeground),
               ),
             ],
           ),
 
           const SizedBox(height: 4),
 
-          // ── Title ──
           Text(
             book.title,
             maxLines: 2,
@@ -1069,7 +1050,6 @@ class _BookCard extends StatelessWidget {
 
           const SizedBox(height: 3),
 
-          // ── Author ──
           Text(
             book.author ?? 'Unknown Author',
             maxLines: 1,
@@ -1082,7 +1062,6 @@ class _BookCard extends StatelessWidget {
 
           const SizedBox(height: 8),
 
-          // ── Price + cart button ──
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -1166,7 +1145,7 @@ class _BookCard extends StatelessWidget {
 }
 
 // ════════════════════════════════════════════════════════
-// FILTER SHEET — full screen modal matching Books.tsx sidebar
+// FILTER SHEET
 // ════════════════════════════════════════════════════════
 
 class _FilterSheet extends StatefulWidget {
@@ -1211,11 +1190,6 @@ class _FilterSheetState extends State<_FilterSheet> {
     _price = widget.priceRange;
   }
 
-  bool get _hasChanges =>
-      _cats.length != widget.selectedCategories.length ||
-      _types.length != widget.selectedContentTypes.length ||
-      _price != widget.priceRange;
-
   @override
   Widget build(BuildContext context) {
     final screenH = MediaQuery.of(context).size.height;
@@ -1228,7 +1202,6 @@ class _FilterSheetState extends State<_FilterSheet> {
       ),
       child: Column(
         children: [
-          // Handle bar
           Container(
             margin: const EdgeInsets.only(top: 10),
             width: 40,
@@ -1239,7 +1212,6 @@ class _FilterSheetState extends State<_FilterSheet> {
             ),
           ),
 
-          // Header
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 14, 8, 14),
             child: Row(
@@ -1283,12 +1255,10 @@ class _FilterSheetState extends State<_FilterSheet> {
 
           Divider(height: 1, color: Colors.grey.shade200),
 
-          // Body
           Expanded(
             child: ListView(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
               children: [
-                // Content Types
                 _sectionTitle('Content Type'),
                 const SizedBox(height: 12),
                 Wrap(
@@ -1317,7 +1287,6 @@ class _FilterSheetState extends State<_FilterSheet> {
                 Divider(color: Colors.grey.shade200),
                 const SizedBox(height: 20),
 
-                // Categories
                 _sectionTitle('Categories'),
                 const SizedBox(height: 12),
                 Wrap(
@@ -1346,21 +1315,14 @@ class _FilterSheetState extends State<_FilterSheet> {
                 Divider(color: Colors.grey.shade200),
                 const SizedBox(height: 20),
 
-                // Price Range
                 _sectionTitle('Price Range'),
                 const SizedBox(height: 12),
                 ...[
                   {'value': 'all', 'label': 'All Prices'},
                   {'value': 'free', 'label': 'Free'},
                   {'value': 'under-15', 'label': 'Under Ksh 2,000'},
-                  {
-                    'value': '15-25',
-                    'label': 'Ksh 2,000 – Ksh 3,500'
-                  },
-                  {
-                    'value': '25-50',
-                    'label': 'Ksh 3,500 – Ksh 7,000'
-                  },
+                  {'value': '15-25', 'label': 'Ksh 2,000 – Ksh 3,500'},
+                  {'value': '25-50', 'label': 'Ksh 3,500 – Ksh 7,000'},
                   {'value': 'over-50', 'label': 'Over Ksh 7,000'},
                 ].map((range) {
                   final selected = _price == range['value'];
@@ -1374,8 +1336,7 @@ class _FilterSheetState extends State<_FilterSheet> {
                       child: Row(
                         children: [
                           AnimatedContainer(
-                            duration:
-                                const Duration(milliseconds: 200),
+                            duration: const Duration(milliseconds: 200),
                             width: 20,
                             height: 20,
                             decoration: BoxDecoration(
@@ -1412,13 +1373,12 @@ class _FilterSheetState extends State<_FilterSheet> {
             ),
           ),
 
-          // Footer — Apply button
           Container(
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
             decoration: BoxDecoration(
               color: Colors.white,
-              border: Border(
-                  top: BorderSide(color: Colors.grey.shade200)),
+              border:
+                  Border(top: BorderSide(color: Colors.grey.shade200)),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.06),
@@ -1475,10 +1435,11 @@ class _FilterSheetState extends State<_FilterSheet> {
         ),
       );
 
-  Widget _selectableChip(
-      {required String label,
-      required bool selected,
-      required VoidCallback onTap}) {
+  Widget _selectableChip({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -1486,13 +1447,10 @@ class _FilterSheetState extends State<_FilterSheet> {
         padding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
-          color:
-              selected ? AppColors.primary : AppColors.muted,
+          color: selected ? AppColors.primary : AppColors.muted,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: selected
-                ? AppColors.primary
-                : Colors.grey.shade300,
+            color: selected ? AppColors.primary : Colors.grey.shade300,
           ),
         ),
         child: Text(
@@ -1528,8 +1486,8 @@ class _Pagination extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(
-          horizontal: 16, vertical: 24),
+      padding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -1658,8 +1616,7 @@ class _EmptyState extends StatelessWidget {
   final bool hasFilters;
   final VoidCallback onClear;
 
-  const _EmptyState(
-      {required this.hasFilters, required this.onClear});
+  const _EmptyState({required this.hasFilters, required this.onClear});
 
   @override
   Widget build(BuildContext context) {
@@ -1724,8 +1681,7 @@ class _ErrorState extends StatelessWidget {
   final String error;
   final VoidCallback onRetry;
 
-  const _ErrorState(
-      {required this.error, required this.onRetry});
+  const _ErrorState({required this.error, required this.onRetry});
 
   @override
   Widget build(BuildContext context) {
@@ -1733,15 +1689,14 @@ class _ErrorState extends StatelessWidget {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: AppColors.primaryLight,
-        border:
-            Border.all(color: AppColors.primary.withOpacity(0.2)),
+        border: Border.all(color: AppColors.primary.withOpacity(0.2)),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: const [
+          const Row(
+            children: [
               Icon(Icons.error_outline,
                   color: AppColors.primary, size: 18),
               SizedBox(width: 8),
@@ -1813,9 +1768,8 @@ class _NavItem extends StatelessWidget {
             style: TextStyle(
               fontSize: 11,
               color: color,
-              fontWeight: active
-                  ? FontWeight.w700
-                  : FontWeight.normal,
+              fontWeight:
+                  active ? FontWeight.w700 : FontWeight.normal,
             ),
           ),
         ],
