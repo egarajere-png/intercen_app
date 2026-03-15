@@ -34,6 +34,10 @@ import 'pages/publish_with_us.dart';
 import 'pages/about_page.dart';
 import 'pages/notifications_page.dart';
 import 'pages/publication_requests_page.dart';
+// ── Admin-only content pages ──────────────────────────────────────────────────
+import 'pages/content_upload_page.dart';
+import 'pages/content_view_page.dart';
+import 'pages/content_update_page.dart';
 
 // ── Role dashboards ───────────────────────────────────────────────────────────
 import 'pages/dashboard/admin_dashboard.dart';
@@ -287,28 +291,32 @@ class _IntercenAppState extends State<IntercenApp> {
         '/profile-setup': (_) =>
             const AuthGuard(child: ProfileSetupPage()),
 
-        // ── Notifications — standalone page reading notifications table ────
+        // ── Notifications ─────────────────────────────────────────────────
         '/notifications': (_) =>
             const AuthGuard(child: NotificationsPage()),
 
-        // ── Publication Requests — admin-only page ────────────────────────
-        // Full approve/reject/review workflow matching the TSX page.
+        // ── Publication Requests (admin only — guard inside page) ─────────
         '/publication-requests': (_) =>
             const AuthGuard(child: PublicationRequestsPage()),
 
-        // ── Publishing (public — shown on onboarding too) ─────────────────
+        // ── Publishing (public) ───────────────────────────────────────────
         '/publish': (_) => const PublishWithUsPage(),
 
-        // ── Content management ────────────────────────────────────────────
+        // ── Content Management (admin only) ───────────────────────────────
+        // AdminGuard wraps AuthGuard — requires login AND admin role.
+        // The role check is also inside each page itself as a second layer.
         '/content-management': (_) =>
-            const AuthGuard(child: ContentManagementPage()),
+            const AdminGuard(child: ContentManagementPage()),
+
+        // ── Content Upload (admin only) ───────────────────────────────────
+        '/upload': (_) => const AdminGuard(child: ContentUploadPage()),
       },
 
       // ── Dynamic / parameterised routes ───────────────────────────────────
       onGenerateRoute: (settings) {
         final name = settings.name ?? '';
 
-        // /checkout/payment  or  /checkout/payment/<orderId>
+        // ── /checkout/payment  or  /checkout/payment/<orderId> ────────────
         if (RegExp(r'^/checkout/payment').hasMatch(name)) {
           final args = settings.arguments;
           String orderId = '';
@@ -324,7 +332,7 @@ class _IntercenAppState extends State<IntercenApp> {
           );
         }
 
-        // /paystack-webview
+        // ── /paystack-webview ─────────────────────────────────────────────
         if (name == '/paystack-webview') {
           final args =
               settings.arguments as Map<String, dynamic>? ?? {};
@@ -338,7 +346,7 @@ class _IntercenAppState extends State<IntercenApp> {
           );
         }
 
-        // /payment-success
+        // ── /payment-success ──────────────────────────────────────────────
         if (name == '/payment-success') {
           final args =
               settings.arguments as Map<String, dynamic>? ?? {};
@@ -351,7 +359,7 @@ class _IntercenAppState extends State<IntercenApp> {
           );
         }
 
-        // /payment-failure
+        // ── /payment-failure ──────────────────────────────────────────────
         if (name == '/payment-failure') {
           final args =
               settings.arguments as Map<String, dynamic>? ?? {};
@@ -364,30 +372,35 @@ class _IntercenAppState extends State<IntercenApp> {
           );
         }
 
-        // /content/<id>  or  /content-view/<id>
+        // ── /content/update/<id>  (ADMIN ONLY) ───────────────────────────
+        // ⚠️ This MUST be checked BEFORE the generic /content/<id> matcher
+        // below, otherwise /content/update/abc matches /content/(.+) first
+        // and gets routed to ContentViewPage instead.
+        final contentUpdateMatch =
+            RegExp(r'^/content/update/(.+)$').firstMatch(name);
+        if (contentUpdateMatch != null) {
+          final contentId = contentUpdateMatch.group(1) ?? '';
+          return MaterialPageRoute(
+            settings: RouteSettings(name: name, arguments: contentId),
+            builder: (_) =>
+                const AdminGuard(child: ContentUpdatePage()),
+          );
+        }
+
+        // ── /content/<id>  or  /content-view/<id>  (ADMIN ONLY) ──────────
+        // Shows the full detail view page (ContentViewPage).
+        // Non-admins are redirected inside AdminGuard → /home.
         final contentMatch =
             RegExp(r'^/content(?:-view)?/(.+)$').firstMatch(name);
         if (contentMatch != null) {
           final contentId = contentMatch.group(1) ?? '';
           return MaterialPageRoute(
-            settings: settings,
-            builder: (_) => AuthGuard(
-                child: ContentReaderPage(contentId: contentId)),
+            settings: RouteSettings(name: name, arguments: contentId),
+            builder: (_) => const AdminGuard(child: ContentViewPage()),
           );
         }
 
-        // /content/update/<id>
-        final contentUpdateMatch =
-            RegExp(r'^/content/update/(.+)$').firstMatch(name);
-        if (contentUpdateMatch != null) {
-          return MaterialPageRoute(
-            settings: settings,
-            builder: (_) =>
-                const AuthGuard(child: ContentManagementPage()),
-          );
-        }
-
-        // /book-detail/<id>
+        // ── /book-detail/<id> ─────────────────────────────────────────────
         final bookMatch =
             RegExp(r'^/book-detail/(.+)$').firstMatch(name);
         if (bookMatch != null) {
@@ -398,7 +411,7 @@ class _IntercenAppState extends State<IntercenApp> {
           );
         }
 
-        // 404 fallback
+        // ── 404 fallback ──────────────────────────────────────────────────
         return MaterialPageRoute(
           builder: (_) => Scaffold(
             backgroundColor: const Color(0xFFF9F5EF),
@@ -449,8 +462,8 @@ class _IntercenAppState extends State<IntercenApp> {
                                 borderRadius:
                                     BorderRadius.circular(12))),
                         child: const Text('Go to Home',
-                            style:
-                                TextStyle(fontFamily: 'DM Sans')),
+                            style: TextStyle(
+                                fontFamily: 'DM Sans')),
                       ),
                     ),
                   ],
@@ -466,6 +479,10 @@ class _IntercenAppState extends State<IntercenApp> {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTH GUARD
+//
+// Requires a valid Supabase session.
+// Redirects to /onboarding if no session exists.
+// Used for all authenticated pages regardless of role.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AuthGuard extends StatelessWidget {
@@ -493,6 +510,130 @@ class AuthGuard extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ADMIN GUARD
+//
+// Double-layer protection for admin-only pages:
+//   Layer 1 — session must exist (same as AuthGuard).
+//   Layer 2 — role cached in RoleService must be 'admin'.
+//
+// If either check fails the user is redirected to /home immediately.
+// An additional role check also lives inside each admin page itself
+// as a third safety net (in case the page is reached via a deep link
+// that bypasses this guard).
+//
+// Why a separate guard instead of reusing AuthGuard?
+//   AuthGuard only checks for a session. AdminGuard additionally verifies
+//   the role, which requires RoleService to have been loaded (it is always
+//   loaded by _RoleGate on login). This keeps the admin check declarative
+//   at the route level so it's impossible to forget.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class AdminGuard extends StatefulWidget {
+  final Widget child;
+  const AdminGuard({super.key, required this.child});
+  @override
+  State<AdminGuard> createState() => _AdminGuardState();
+}
+
+class _AdminGuardState extends State<AdminGuard> {
+  bool _checking = true;
+  bool _allowed  = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _check();
+  }
+
+  Future<void> _check() async {
+    // 1 — session check
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session == null) {
+      if (mounted) {
+        Navigator.of(context).pushNamedAndRemoveUntil(
+            '/onboarding', (_) => false);
+      }
+      return;
+    }
+
+    // 2 — role check (load if not yet cached)
+    await RoleService.instance.load();
+    final role = RoleService.instance.role;
+
+    if (role != 'admin') {
+      if (mounted) {
+        // Redirect non-admins silently to home with a brief message
+        Navigator.of(context).pushNamedAndRemoveUntil(
+            '/home', (_) => false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Access denied. Admin only.',
+              style: TextStyle(
+                  fontFamily: 'DM Sans', fontWeight: FontWeight.w500),
+            ),
+            backgroundColor: const Color(0xFFB11226),
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.all(16),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    // 3 — all good
+    if (mounted) setState(() { _checking = false; _allowed = true; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Show a branded loading screen while verifying — never flash the
+    // child widget to a non-admin user even for a single frame.
+    if (_checking || !_allowed) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF9F5EF),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 64, height: 64,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFB11226).withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.shield_rounded,
+                    size: 32, color: Color(0xFFB11226)),
+              ),
+              const SizedBox(height: 20),
+              const SizedBox(
+                width: 28, height: 28,
+                child: CircularProgressIndicator(
+                  strokeWidth: 3,
+                  valueColor:
+                      AlwaysStoppedAnimation(Color(0xFFB11226)),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text('Verifying access…',
+                  style: TextStyle(
+                    fontFamily: 'DM Sans',
+                    fontSize: 13,
+                    color: Color(0xFF6B7280),
+                  )),
+            ],
+          ),
+        ),
+      );
+    }
+    return widget.child;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SHELL — canonical root page after login
 //
 // Manages Home (index 0) and Books (index 1) in-place.
@@ -506,22 +647,16 @@ class Shell extends StatefulWidget {
   State<Shell> createState() => _ShellState();
 }
 
+// AFTER — Books is a pushed route, Shell only holds Home
 class _ShellState extends State<Shell> {
-  int _index = 0;
-
-  static const _pages = <Widget>[
-    HomePage(),
-    BooksPage(),
-  ];
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _pages[_index],
+      body: const HomePage(),
       bottomNavigationBar: _AppBottomNav(
-        currentIndex: _index,
-        onHome:    () => setState(() => _index = 0),
-        onBooks:   () => setState(() => _index = 1),
+        currentIndex: 0,           // Home always active while Shell shows
+        onHome:    () {},           // no-op — already on Home
+        onBooks:   () => Navigator.pushNamed(context, '/books'),  // pushes route
         onCart:    () => Navigator.pushNamed(context, '/cart'),
         onProfile: () => Navigator.pushNamed(context, '/settings'),
       ),
@@ -685,7 +820,8 @@ class _PaystackLaunchPageState extends State<PaystackLaunchPage>
         mode: LaunchMode.externalApplication);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open payment page.')));
+          const SnackBar(
+              content: Text('Could not open payment page.')));
       return;
     }
     if (mounted) setState(() { _launched = true; _polling = true; });
@@ -964,10 +1100,8 @@ class PaymentSuccessPage extends StatelessWidget {
                   decoration: const BoxDecoration(
                       color: Color(0xFFF0FDF4),
                       shape: BoxShape.circle),
-                  child: const Icon(
-                      Icons.check_circle_rounded,
-                      color: Color(0xFF16A34A),
-                      size: 70),
+                  child: const Icon(Icons.check_circle_rounded,
+                      color: Color(0xFF16A34A), size: 70),
                 ),
               ),
               const SizedBox(height: 28),
@@ -1411,8 +1545,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
             .single();
         if (d['payment_status'] == 'paid') {
           _stopPoll();
-          _goSuccess(
-              widget.orderId,
+          _goSuccess(widget.orderId,
               d['order_number'] as String? ?? '');
         }
       } catch (e) {
@@ -1455,8 +1588,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
       body: FadeTransition(
         opacity: _fadeAnim,
         child: ListView(
-          padding:
-              const EdgeInsets.fromLTRB(16, 16, 16, 120),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
           children: [
             _orderInfoCard(),
             const SizedBox(height: 16),
@@ -1550,8 +1682,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
-              child:
-                  _H(Icons.menu_book_rounded, 'Order Items'),
+              child: _H(Icons.menu_book_rounded, 'Order Items'),
             ),
             ..._order!.items.asMap().entries.map((e) =>
                 Column(children: [
@@ -1730,22 +1861,19 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
                       border: const OutlineInputBorder(
                           borderRadius:
                               BorderRadius.horizontal(
-                                  right:
-                                      Radius.circular(10)),
+                                  right: Radius.circular(10)),
                           borderSide: BorderSide(
                               color: Color(0xFFD1D5DB))),
                       enabledBorder: const OutlineInputBorder(
                           borderRadius:
                               BorderRadius.horizontal(
-                                  right:
-                                      Radius.circular(10)),
+                                  right: Radius.circular(10)),
                           borderSide: BorderSide(
                               color: Color(0xFFD1D5DB))),
                       focusedBorder: const OutlineInputBorder(
                           borderRadius:
                               BorderRadius.horizontal(
-                                  right:
-                                      Radius.circular(10)),
+                                  right: Radius.circular(10)),
                           borderSide: BorderSide(
                               color: Color(0xFF16A34A),
                               width: 2)),
@@ -1841,8 +1969,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
               padding: EdgeInsets.symmetric(vertical: 12),
               child: Divider(height: 1)),
           Row(
-            mainAxisAlignment:
-                MainAxisAlignment.spaceBetween,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text('Total',
                   style: TextStyle(
@@ -1866,8 +1993,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
       return const SizedBox.shrink();
     final isP = _method == _PMethod.paystack;
     final isM = _method == _PMethod.mpesa;
-    final ok  = (isP ||
-            (isM && _phoneCtrl.text.length >= 9)) &&
+    final ok  = (isP || (isM && _phoneCtrl.text.length >= 9)) &&
         !_processing;
     final col = isM
         ? const Color(0xFF16A34A)
@@ -1878,9 +2004,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
     return Container(
       color: Colors.white,
       padding: EdgeInsets.fromLTRB(
-          16,
-          12,
-          16,
+          16, 12, 16,
           12 + MediaQuery.of(context).padding.bottom),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         if (_error != null) ...[
@@ -1900,19 +2024,16 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
                 elevation: ok ? 2 : 0,
                 shadowColor: col.withOpacity(0.35),
                 shape: RoundedRectangleBorder(
-                    borderRadius:
-                        BorderRadius.circular(14))),
+                    borderRadius: BorderRadius.circular(14))),
             child: _processing
                 ? const SizedBox(
                     width: 22, height: 22,
                     child: CircularProgressIndicator(
                         strokeWidth: 2.5,
-                        valueColor:
-                            AlwaysStoppedAnimation(
-                                Colors.white)))
+                        valueColor: AlwaysStoppedAnimation(
+                            Colors.white)))
                 : Row(
-                    mainAxisAlignment:
-                        MainAxisAlignment.center,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                     Icon(
                       _method == _PMethod.none
@@ -1943,9 +2064,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
   Widget _paidBar() => Container(
         color: Colors.white,
         padding: EdgeInsets.fromLTRB(
-            16,
-            12,
-            16,
+            16, 12, 16,
             12 + MediaQuery.of(context).padding.bottom),
         child: Container(
           padding: const EdgeInsets.all(16),
@@ -1979,8 +2098,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
               const SizedBox(height: 20),
               const Text('Loading order details…',
                   style: TextStyle(
-                      color: Color(0xFF6B7280),
-                      fontSize: 14)),
+                      color: Color(0xFF6B7280), fontSize: 14)),
             ],
           ),
         ),
@@ -1992,8 +2110,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
           backgroundColor: Colors.white,
           elevation: 0,
           leading: IconButton(
-              icon: const Icon(
-                  Icons.arrow_back_ios_new_rounded,
+              icon: const Icon(Icons.arrow_back_ios_new_rounded,
                   size: 20),
               onPressed: () => Navigator.pop(context)),
           title: const Text('Checkout'),
@@ -2005,8 +2122,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const Icon(Icons.error_outline_rounded,
-                    size: 72,
-                    color: Color(0xFFEF4444)),
+                    size: 72, color: Color(0xFFEF4444)),
                 const SizedBox(height: 20),
                 const Text('Order Not Found',
                     style: TextStyle(
@@ -2018,8 +2134,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                         color: Color(0xFF6B7280),
-                        fontSize: 14,
-                        height: 1.5)),
+                        fontSize: 14, height: 1.5)),
                 const SizedBox(height: 32),
                 ElevatedButton(
                   onPressed: () =>
@@ -2028,10 +2143,8 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
                   style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
-                      padding:
-                          const EdgeInsets.symmetric(
-                              horizontal: 32,
-                              vertical: 14),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 32, vertical: 14),
                       shape: RoundedRectangleBorder(
                           borderRadius:
                               BorderRadius.circular(12))),
@@ -2062,8 +2175,7 @@ class _CheckoutPaymentPageState extends State<CheckoutPaymentPage>
                 child: Text(msg,
                     style: const TextStyle(
                         color: Color(0xFF991B1B),
-                        fontSize: 13,
-                        height: 1.4))),
+                        fontSize: 13, height: 1.4))),
           ],
         ),
       );
@@ -2140,8 +2252,7 @@ class _KV extends StatelessWidget {
           children: [
             Text(l,
                 style: const TextStyle(
-                    fontSize: 13,
-                    color: Color(0xFF6B7280))),
+                    fontSize: 13, color: Color(0xFF6B7280))),
             Text(v,
                 style: TextStyle(
                     fontSize: 13,
@@ -2165,8 +2276,7 @@ class _SR extends StatelessWidget {
           children: [
             Text(l,
                 style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF6B7280))),
+                    fontSize: 14, color: Color(0xFF6B7280))),
             Text(v,
                 style: TextStyle(
                     fontSize: 14,
@@ -2228,15 +2338,12 @@ class _MethodCard extends StatelessWidget {
                 width: 42, height: 42,
                 decoration: BoxDecoration(
                     color: iconBg,
-                    borderRadius:
-                        BorderRadius.circular(10)),
-                child: Icon(icon,
-                    color: iconColor, size: 22)),
+                    borderRadius: BorderRadius.circular(10)),
+                child: Icon(icon, color: iconColor, size: 22)),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
-                crossAxisAlignment:
-                    CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
                       style: const TextStyle(
@@ -2294,8 +2401,7 @@ class _BannerW extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Column(
-                crossAxisAlignment:
-                    CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
                       style: TextStyle(

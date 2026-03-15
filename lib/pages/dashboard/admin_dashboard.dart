@@ -1272,7 +1272,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           icon: const Icon(Icons.visibility_outlined,
               size: 16, color: _kMuted),
           onPressed: () => Navigator.pushNamed(
-              context, '/book-detail', arguments: c),
+              context, '/content-view/${c['id']}', arguments: c),
           tooltip: 'View',
           padding: EdgeInsets.zero,
           constraints:

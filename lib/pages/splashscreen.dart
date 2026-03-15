@@ -35,18 +35,18 @@ class _OnboardingPageState extends State<OnboardingPage> {
     _checkExistingSession();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_midCtrl.hasClients) {
+      if (_midCtrl.hasClients && _midCtrl.position.hasContentDimensions) {
         _midCtrl.jumpTo(_midCtrl.position.maxScrollExtent);
       }
     });
 
     _timer = Timer.periodic(const Duration(milliseconds: 16), (_) {
-      if (_topCtrl.hasClients) {
+      if (_topCtrl.hasClients && _topCtrl.position.hasContentDimensions) {
         double n = _topCtrl.offset + 1;
         if (n >= _topCtrl.position.maxScrollExtent) n = 0;
         _topCtrl.jumpTo(n);
       }
-      if (_midCtrl.hasClients) {
+      if (_midCtrl.hasClients && _midCtrl.position.hasContentDimensions) {
         double n = _midCtrl.offset - 1;
         if (n <= 0) n = _midCtrl.position.maxScrollExtent;
         _midCtrl.jumpTo(n);
@@ -90,7 +90,8 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF9F5EF),
-      body: Column(children: [
+      body: SingleChildScrollView(
+        child: Column(children: [
         const SizedBox(height: 60),
         _scrollRow(_topCtrl),
         const SizedBox(height: 12),
@@ -132,7 +133,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
             style: TextStyle(fontSize: 16, color: Colors.black),
           ),
         ),
-        const Spacer(),
+        const SizedBox(height: 24),
 
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -169,6 +170,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
         ),
         const SizedBox(height: 24),
       ]),
+      ),
     );
   }
 
