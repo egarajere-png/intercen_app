@@ -10,16 +10,94 @@ class HomePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SingleChildScrollView(
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: const [
+            // Hero Section
+            _HeroSection(),
+            // Category Section
+            _CategorySection(),
+            // Promo Banner
+            _PromoBanner(),
+          ],
+        ),
+      ),
+      bottomNavigationBar: _bottomNav(context),
+    );
+  }
+
+  Widget _bottomNav(BuildContext context) => Container(
+        height: 64,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border(
+              top: BorderSide(color: Colors.grey.shade200)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 12,
+              offset: const Offset(0, -4),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _navItem(
+              icon: Icons.home,
+              label: 'Home',
+              active: true,
+              onTap: null, // already on home
+            ),
+            _navItem(
+              icon: Icons.menu_book_outlined,
+              label: 'Books',
+              active: false,
+              onTap: () => Navigator.pushNamed(context, '/books'),
+            ),
+            _navItem(
+              icon: Icons.shopping_cart_outlined,
+              label: 'Cart',
+              active: false,
+              onTap: () => Navigator.pushNamed(context, '/cart'),
+            ),
+            _navItem(
+              icon: Icons.person_outline,
+              label: 'Profile',
+              active: false,
+              onTap: () => Navigator.pushNamed(context, '/profile'),
+            ),
+          ],
+        ),
+      );
+
+  Widget _navItem({
+    required IconData icon,
+    required String label,
+    required bool active,
+    required VoidCallback? onTap,
+  }) {
+    final color = active ? const Color(0xFFB11226) : Colors.grey;
+    return GestureDetector(
+      onTap: onTap,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Hero Section
-          _HeroSection(),
-          // Category Section
-          _CategorySection(),
-          // Promo Banner
-          _PromoBanner(),
+          Icon(icon, color: color, size: 22),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'DM Sans',
+              fontSize: 11,
+              color: color,
+              fontWeight:
+                  active ? FontWeight.w700 : FontWeight.normal,
+            ),
+          ),
         ],
       ),
     );

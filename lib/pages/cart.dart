@@ -1528,23 +1528,20 @@ class _CartPageState extends State<CartPage> {
             ],
           ),
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _navItem(
-                  Icons.home_outlined, 'Home', false, () {
-                Navigator.pushNamedAndRemoveUntil(
-                    context, '/home', (r) => false);
-              }),
-              _navItem(
-                  Icons.menu_book_outlined, 'Books', false,
-                  () {
-                Navigator.pushNamedAndRemoveUntil(
-                    context, '/books', (r) => false);
-              }),
-              _navItem(Icons.shopping_cart, 'Cart', true,
-                  null),
-            ],
-          ),
+  mainAxisAlignment: MainAxisAlignment.spaceAround,
+  children: [
+    _navItem(Icons.home_outlined, 'Home', false, () {
+      Navigator.pushNamedAndRemoveUntil(context, '/home', (r) => false);
+    }),
+    _navItem(Icons.menu_book_outlined, 'Books', false, () {
+      Navigator.pushNamedAndRemoveUntil(context, '/books', (r) => false);
+    }),
+    _navItem(Icons.shopping_cart, 'Cart', true, null),
+    _navItem(Icons.person_outline, 'Profile', false, () {
+      Navigator.pushNamed(context, '/profile');
+    }),
+  ],
+),
         ),
       );
 
