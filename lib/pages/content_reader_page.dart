@@ -1,7 +1,8 @@
 import 'dart:async';
 // ignore: avoid_web_libraries_in_flutter
-import 'dart:html' as html;
-import 'dart:ui_web' as ui;
+
+import 'web_stub.dart'
+    if (dart.library.html) 'web_impl.dart';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -261,14 +262,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
 
   // ─────────────────────────────────────────────────────────────────────────
   // OPEN WITH EXTERNAL APP
-  //
-  // Web  → _downloadFileWeb() forces a browser download via a hidden
-  //         <a download> anchor. The OS opens the saved file in whatever
-  //         app the user has set as default (WPS, Word, Acrobat, etc.).
-  //         This bypasses the browser's built-in viewer completely.
-  //
-  // Mobile → launchUrl with LaunchMode.externalApplication fires the OS
-  //           intent / share sheet; user picks their preferred app.
   // ─────────────────────────────────────────────────────────────────────────
   Future<void> _openWithExternalApp() async {
     if (!_hasFile) return;
@@ -276,12 +269,10 @@ class _ContentReaderPageState extends State<ContentReaderPage>
     final fileInfo = _FileTypeInfo.fromUrl(_fileUrl);
 
     if (kIsWeb) {
-      // Web: force download — do NOT open in a new tab
       await _launchFileUrl();
       return;
     }
 
-    // Mobile: show confirmation sheet first
     if (!mounted) return;
     final shouldOpen = await showModalBottomSheet<bool>(
       context: context,
@@ -301,39 +292,21 @@ class _ContentReaderPageState extends State<ContentReaderPage>
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // WEB: Force-download via hidden <a download> anchor
+  // WEB: Force-download via the platform-conditional downloadFile() function.
   //
-  // Why not html.window.open()?
-  //   → Browsers intercept PDFs and render them in their built-in viewer.
-  //   → DOCX/EPUB files open as raw binary garbage or trigger a download
-  //     anyway — but without the correct filename.
+  // On web  → web_impl.dart creates a hidden <a download> anchor and clicks it.
+  // On mobile → web_stub.dart throws UnsupportedError (never called on mobile).
   //
-  // This approach:
-  //   1. Creates an invisible <a> tag with `download` attribute set to the
-  //      real filename (e.g. "my-book.pdf").
-  //   2. Programmatically clicks it.
-  //   3. The browser saves the file to the Downloads folder.
-  //   4. The OS opens it in the user's default app on next access,
-  //      OR the browser's download bar offers "Open with…" immediately.
-  //
-  // CORS note: Supabase Storage URLs are same-origin for your app so the
-  // download attribute works correctly. If you ever use an external CDN,
-  // add the CDN domain to your CORS policy in Supabase.
+  // This method is only ever invoked when kIsWeb == true (see _launchFileUrl),
+  // so the stub will never actually throw in practice.
   // ─────────────────────────────────────────────────────────────────────────
   void _downloadFileWeb() {
     final url      = _fileUrl!;
     final fileName = _FileTypeInfo.fileNameFromUrl(url);
 
-    // Create a hidden anchor element
-    final anchor = html.AnchorElement(href: url)
-      ..setAttribute('download', fileName)  // ← forces download, not view
-      ..setAttribute('target', '_blank')    // fallback for cross-origin
-      ..style.display = 'none';
-
-    // Attach, click, detach
-    html.document.body?.append(anchor);
-    anchor.click();
-    anchor.remove();
+    // Delegates to web_impl.dart on web, web_stub.dart on mobile.
+    // Since this is only called when kIsWeb == true, the stub is never reached.
+    downloadFile(url, fileName);
 
     debugPrint('[Reader] Web download triggered: $fileName');
   }
@@ -344,13 +317,9 @@ class _ContentReaderPageState extends State<ContentReaderPage>
 
     try {
       if (kIsWeb) {
-        // ── WEB: force download ───────────────────────────────────────────
-        // This triggers a file download instead of opening the browser's
-        // built-in PDF/DOCX viewer. The user's OS then opens it in WPS,
-        // Word, Acrobat, or whatever they have set as default.
+        // ── WEB: force download via hidden <a download> anchor ────────────
         _downloadFileWeb();
 
-        // Show a friendly snack to guide the user
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Row(children: [
@@ -398,7 +367,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
         );
 
         if (!launched && mounted) {
-          // Fallback: in-app browser (e.g. for txt files)
           final fallback = await launchUrl(
             uri,
             mode: LaunchMode.inAppBrowserView,
@@ -407,7 +375,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
         }
       }
 
-      // Record progress: mark as opened
       _saveReadingProgress();
     } catch (e) {
       debugPrint('[Reader] Failed to open file: $e');
@@ -1077,22 +1044,17 @@ class _ContentReaderPageState extends State<ContentReaderPage>
 
   // ─────────────────────────────────────────────────────────────────────────
   // "Download / Open in App" button
-  //
-  // Web label  : "Download to Open"  (accurate — browser downloads the file)
-  // Mobile label: "Open in App"       (OS fires the intent)
   // ─────────────────────────────────────────────────────────────────────────
   Widget _buildOpenWithExternalButton(
       _FileTypeInfo fileInfo, _ReaderTheme theme) {
     final isWeb = kIsWeb;
 
-    // ── Label & sub-label change depending on platform ────────────────────
     final label = isWeb ? 'Download to Open' : 'Open in App';
     final subLabel = isWeb
         ? 'Downloads the file — open it with WPS, Word, or your default app'
         : 'Opens with ${fileInfo.suggestedApps.take(2).join(', ')} or your default reader';
 
     return Column(children: [
-      // Main button
       SizedBox(
         width: double.infinity,
         height: 56,
@@ -1121,7 +1083,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(
-                        // Web: download icon; Mobile: open-in-browser icon
                         isWeb
                             ? Icons.download_rounded
                             : Icons.open_in_browser,
@@ -1139,7 +1100,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
       ),
       const SizedBox(height: 10),
 
-      // Sub-label
       Row(mainAxisAlignment: MainAxisAlignment.center, children: [
         Icon(
             isWeb
@@ -1158,13 +1118,11 @@ class _ContentReaderPageState extends State<ContentReaderPage>
         ),
       ]),
 
-      // Compatible apps row (mobile only)
       if (!isWeb) ...[
         const SizedBox(height: 14),
         _buildCompatibleAppsRow(fileInfo, theme),
       ],
 
-      // Web hint: where to find the download
       if (isWeb) ...[
         const SizedBox(height: 14),
         Container(
@@ -1196,7 +1154,6 @@ class _ContentReaderPageState extends State<ContentReaderPage>
     ]);
   }
 
-  // ── Compatible apps chips row (mobile) ───────────────────────────────────
   Widget _buildCompatibleAppsRow(_FileTypeInfo fileInfo, _ReaderTheme theme) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text('Compatible apps on your device:',
