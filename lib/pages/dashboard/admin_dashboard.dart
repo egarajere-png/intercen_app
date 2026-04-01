@@ -1322,15 +1322,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               overflow: TextOverflow.ellipsis),
         ])),
         const SizedBox(width: 8),
-        if (isProtected)
-          _RolePill('admin', _roleColor('admin'))
-        else
-          _RoleDropdown(value: role, saving: _savingRole == u['id'],
-              onChanged: (r) => _changeRole(u['id'] as String, r ?? role)),
+        Flexible(
+          child: isProtected
+              ? _RolePill('admin', _roleColor('admin'))
+              : _RoleDropdown(value: role, saving: _savingRole == u['id'],
+                  onChanged: (r) => _changeRole(u['id'] as String, r ?? role)),
+        ),
         const SizedBox(width: 8),
         if (MediaQuery.of(context).size.width >= 600)
-          Padding(padding: const EdgeInsets.only(right: 8),
-            child: Text(acctType, style: const TextStyle(fontFamily: 'DM Sans', fontSize: 11, color: _kMutedLt))),
+          Flexible(
+            child: Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Text(acctType,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontFamily: 'DM Sans', fontSize: 11, color: _kMutedLt)))),
         GestureDetector(
           onTap: isProtected ? null : () => _toggleActive(u['id'] as String, isActive),
           child: Container(
@@ -1582,26 +1587,43 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     borderSide: const BorderSide(color: _kBorder)),
                 filled: true, fillColor: _kWhite),
             )),
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            Container(decoration: BoxDecoration(border: Border.all(color: _kBorder),
-                borderRadius: BorderRadius.circular(8)), child: Row(mainAxisSize: MainAxisSize.min, children: [
-              GestureDetector(onTap: () => setState(() => _contentGridMode = true),
-                child: Container(padding: const EdgeInsets.all(7),
-                  decoration: BoxDecoration(color: _contentGridMode ? _kPrimary : Colors.transparent,
-                      borderRadius: const BorderRadius.horizontal(left: Radius.circular(7))),
-                  child: Icon(Icons.grid_view_rounded, size: 15, color: _contentGridMode ? _kWhite : _kMuted))),
-              GestureDetector(onTap: () => setState(() => _contentGridMode = false),
-                child: Container(padding: const EdgeInsets.all(7),
-                  decoration: BoxDecoration(color: !_contentGridMode ? _kPrimary : Colors.transparent,
-                      borderRadius: const BorderRadius.horizontal(right: Radius.circular(7))),
-                  child: Icon(Icons.view_list_rounded, size: 15, color: !_contentGridMode ? _kWhite : _kMuted))),
-            ])),
-            const SizedBox(width: 8),
-            _SmallBtn(label: '', icon: Icons.refresh_rounded, onTap: _loadContent),
-            const SizedBox(width: 8),
-            _SmallBtn(label: 'New', icon: Icons.add_rounded,
-                onTap: () => Navigator.pushNamed(context, '/upload')),
-          ]),
+           Wrap(spacing: 8, runSpacing: 8, children: [
+  Container(
+    decoration: BoxDecoration(
+      border: Border.all(color: _kBorder),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      GestureDetector(
+        onTap: () => setState(() => _contentGridMode = true),
+        child: Container(
+          padding: const EdgeInsets.all(7),
+          decoration: BoxDecoration(
+            color: _contentGridMode ? _kPrimary : Colors.transparent,
+            borderRadius: const BorderRadius.horizontal(left: Radius.circular(7)),
+          ),
+          child: Icon(Icons.grid_view_rounded, size: 15,
+              color: _contentGridMode ? _kWhite : _kMuted),
+        ),
+      ),
+      GestureDetector(
+        onTap: () => setState(() => _contentGridMode = false),
+        child: Container(
+          padding: const EdgeInsets.all(7),
+          decoration: BoxDecoration(
+            color: !_contentGridMode ? _kPrimary : Colors.transparent,
+            borderRadius: const BorderRadius.horizontal(right: Radius.circular(7)),
+          ),
+          child: Icon(Icons.view_list_rounded, size: 15,
+              color: !_contentGridMode ? _kWhite : _kMuted),
+        ),
+      ),
+    ]),
+  ),
+  _SmallBtn(label: '', icon: Icons.refresh_rounded, onTap: _loadContent),
+  _SmallBtn(label: 'New', icon: Icons.add_rounded,
+      onTap: () => Navigator.pushNamed(context, '/upload')),
+]),
         ]),
         const SizedBox(height: 10),
         SingleChildScrollView(scrollDirection: Axis.horizontal,
@@ -1858,28 +1880,30 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ]),
               if (isUpdating) const SizedBox(width: 14, height: 14,
                 child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(_kPrimary))),
-              const Spacer(),
-              GestureDetector(
-                onTap: isDeleting ? null : () => _confirm(_ConfirmOpts(
-                  title: 'Delete Order', destructive: true,
-                  description: 'Permanently delete order #$num? Cannot be undone.',
-                  confirmLabel: 'Delete', onConfirm: () => _doDeleteOrder(orderId, num.toString()),
-                )),
-                child: isDeleting
-                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(_kRed)))
-                    : const Icon(Icons.delete_outline, size: 16, color: _kMuted)),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () {
-                  setState(() => _expandedOrderId = isExpanded ? null : orderId);
-                  if (!isExpanded) _loadOrderItems(orderId);
-                },
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text(isExpanded ? 'Hide' : 'Details',
-                      style: const TextStyle(fontFamily: 'DM Sans', fontSize: 11, color: _kPrimary)),
-                  Icon(isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
-                      size: 14, color: _kPrimary),
-                ])),
+              // Spacer is invalid in Wrap — group delete + details into a single min-size Row
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                GestureDetector(
+                  onTap: isDeleting ? null : () => _confirm(_ConfirmOpts(
+                    title: 'Delete Order', destructive: true,
+                    description: 'Permanently delete order #$num? Cannot be undone.',
+                    confirmLabel: 'Delete', onConfirm: () => _doDeleteOrder(orderId, num.toString()),
+                  )),
+                  child: isDeleting
+                      ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(_kRed)))
+                      : const Icon(Icons.delete_outline, size: 16, color: _kMuted)),
+                const SizedBox(width: 12),
+                GestureDetector(
+                  onTap: () {
+                    setState(() => _expandedOrderId = isExpanded ? null : orderId);
+                    if (!isExpanded) _loadOrderItems(orderId);
+                  },
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Text(isExpanded ? 'Hide' : 'Details',
+                        style: const TextStyle(fontFamily: 'DM Sans', fontSize: 11, color: _kPrimary)),
+                    Icon(isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+                        size: 14, color: _kPrimary),
+                  ])),
+              ]),
             ]),
           ])),
         ])),
@@ -2107,11 +2131,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   style: const TextStyle(fontFamily: 'DM Sans', fontSize: 10, color: _kMutedLt)),
             ]),
           ])),
-          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text('KES ${amount.toStringAsFixed(2)}',
-                style: const TextStyle(fontFamily: 'DM Sans', fontWeight: FontWeight.w800, fontSize: 17, color: Color(0xFF1F2937))),
-            Text(_date(wd['created_at']), style: const TextStyle(fontFamily: 'DM Sans', fontSize: 11, color: _kMutedLt)),
-          ]),
+          Flexible(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text('KES ${amount.toStringAsFixed(2)}',
+                    style: const TextStyle(fontFamily: 'DM Sans', fontWeight: FontWeight.w800, fontSize: 17, color: Color(0xFF1F2937)))),
+              Text(_date(wd['created_at']), style: const TextStyle(fontFamily: 'DM Sans', fontSize: 11, color: _kMutedLt)),
+            ]),
+          ),
         ]),
 
         if (wallet != null) ...[
@@ -2555,73 +2583,150 @@ class _ContentListRow extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final id          = item['id'] as String;
-    final isPublished = item['status'] == 'published';
-    final isBusy      = publishingId == id;
-    final isDeleting  = deletingId == id;
-    final isFeatured  = item['is_featured'] == true;
-    final coverUrl    = item['cover_image_url'] as String?;
-    final title       = item['title'] as String? ?? '—';
-    final author      = item['author'] as String? ?? '—';
-    final type        = item['content_type'] as String? ?? '';
-    final isFree      = item['is_free'] == true;
-    final price       = double.tryParse(item['price']?.toString() ?? '0') ?? 0;
-    final views       = item['view_count'] as int? ?? 0;
-    final dls         = item['total_downloads'] as int? ?? 0;
-    final status      = item['status'] as String? ?? 'draft';
-    final created     = item['created_at'] as String?;
+Widget build(BuildContext context) {
+  final id          = item['id'] as String;
+  final isPublished = item['status'] == 'published';
+  final isBusy      = publishingId == id;
+  final isDeleting  = deletingId == id;
+  final isFeatured  = item['is_featured'] == true;
+  final coverUrl    = item['cover_image_url'] as String?;
+  final title       = item['title'] as String? ?? '—';
+  final author      = item['author'] as String? ?? '—';
+  final type        = item['content_type'] as String? ?? '';
+  final isFree      = item['is_free'] == true;
+  final price       = double.tryParse(item['price']?.toString() ?? '0') ?? 0;
+  final views       = item['view_count'] as int? ?? 0;
+  final dls         = item['total_downloads'] as int? ?? 0;
+  final status      = item['status'] as String? ?? 'draft';
+  final created     = item['created_at'] as String?;
 
-    return Padding(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      child: Row(children: [
-        if (coverUrl != null)
-          ClipRRect(borderRadius: BorderRadius.circular(4),
-            child: CachedNetworkImage(imageUrl: coverUrl, width: 32, height: 44, fit: BoxFit.cover))
-        else
-          Container(width: 32, height: 44,
-            decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(4)),
-            child: const Icon(Icons.book_outlined, size: 14, color: _kMutedLt)),
-        const SizedBox(width: 10),
-        Expanded(flex: 3, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+  return Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    child: Row(children: [
+      // Cover thumbnail — fixed, small
+      if (coverUrl != null)
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: CachedNetworkImage(
+            imageUrl: coverUrl, width: 32, height: 44, fit: BoxFit.cover),
+        )
+      else
+        Container(
+          width: 32, height: 44,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF3F4F6),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: const Icon(Icons.book_outlined, size: 14, color: _kMutedLt),
+        ),
+      const SizedBox(width: 10),
+
+      // Title + author — flex fills remaining space
+      Expanded(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Flexible(child: Text(title, style: const TextStyle(fontFamily: 'DM Sans', fontWeight: FontWeight.w600,
-                fontSize: 12, color: Color(0xFF1F2937)), overflow: TextOverflow.ellipsis)),
-            if (isFeatured) ...[const SizedBox(width: 4), const Icon(Icons.star_rounded, size: 11, color: _kAmber)],
+            Flexible(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  fontFamily: 'DM Sans',
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                  color: Color(0xFF1F2937),
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (isFeatured) ...[
+              const SizedBox(width: 4),
+              const Icon(Icons.star_rounded, size: 11, color: _kAmber),
+            ],
           ]),
-          Text(author, style: const TextStyle(fontFamily: 'DM Sans', fontSize: 10, color: _kMutedLt),
-              overflow: TextOverflow.ellipsis),
-        ])),
-        const SizedBox(width: 8),
-        Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          decoration: BoxDecoration(color: const Color(0xFFF3F4F6), borderRadius: BorderRadius.circular(4)),
-          child: Text(type, style: const TextStyle(fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt))),
-        const SizedBox(width: 8),
-        _StatusPill(status),
-        const SizedBox(width: 8),
-        isFree
-            ? const Text('Free', style: TextStyle(fontFamily: 'DM Sans', fontSize: 11, fontWeight: FontWeight.w700, color: _kGreen))
-            : Text('KES ${price.toStringAsFixed(0)}', style: const TextStyle(fontFamily: 'DM Sans', fontSize: 11, fontWeight: FontWeight.w700)),
-        const SizedBox(width: 8),
-        Text('${views}v ${dls}dl', style: const TextStyle(fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt)),
-        const SizedBox(width: 8),
-        if (created != null) Text(_fmtDate(created), style: const TextStyle(fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt)),
-        const SizedBox(width: 8),
-        Row(mainAxisSize: MainAxisSize.min, children: [
-          _tinyBtn(Icons.visibility_outlined, () => onView(id)),
-          _tinyBtn(Icons.edit_outlined, () => onEdit(id)),
-          _tinyBtn(isFeatured ? Icons.star_rounded : Icons.star_border_rounded,
-              () => onToggleFeatured(id, isFeatured), color: isFeatured ? _kAmber : _kMuted),
-          isBusy
-              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(_kPrimary)))
-              : _tinyBtn(isPublished ? Icons.visibility_off_outlined : Icons.public_rounded,
-                  () => onPublish(id, isPublished ? 'unpublish' : 'publish'),
-                  color: isPublished ? _kOrange : _kGreen),
-          isDeleting
-              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(_kRed)))
-              : _tinyBtn(Icons.delete_outline, () => onDelete(id, title), color: _kRed),
+          Text(
+            author,
+            style: const TextStyle(fontFamily: 'DM Sans', fontSize: 10, color: _kMutedLt),
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 2),
+          // On narrow screens wrap the meta pills below the title
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              if (type.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF3F4F6),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(type,
+                      style: const TextStyle(fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt)),
+                ),
+              _StatusPill(status),
+              isFree
+                  ? const Text('Free',
+                      style: TextStyle(
+                        fontFamily: 'DM Sans',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: _kGreen,
+                      ))
+                  : Text(
+                      'KES ${price.toStringAsFixed(0)}',
+                      style: const TextStyle(
+                          fontFamily: 'DM Sans', fontSize: 11, fontWeight: FontWeight.w700),
+                    ),
+              Text('${views}v ${dls}dl',
+                  style: const TextStyle(
+                      fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt)),
+              if (created != null)
+                Text(_fmtDate(created),
+                    style: const TextStyle(
+                        fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt)),
+            ],
+          ),
         ]),
-      ]));
-  }
+      ),
+      const SizedBox(width: 8),
+
+      // Action icons — fixed on the right, never shrink
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        _tinyBtn(Icons.visibility_outlined, () => onView(id)),
+        _tinyBtn(Icons.edit_outlined, () => onEdit(id)),
+        _tinyBtn(
+          isFeatured ? Icons.star_rounded : Icons.star_border_rounded,
+          () => onToggleFeatured(id, isFeatured),
+          color: isFeatured ? _kAmber : _kMuted,
+        ),
+        isBusy
+            ? const SizedBox(
+                width: 20, height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation(_kPrimary),
+                ))
+            : _tinyBtn(
+                isPublished
+                    ? Icons.visibility_off_outlined
+                    : Icons.public_rounded,
+                () => onPublish(id, isPublished ? 'unpublish' : 'publish'),
+                color: isPublished ? _kOrange : _kGreen,
+              ),
+        isDeleting
+            ? const SizedBox(
+                width: 20, height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation(_kRed),
+                ))
+            : _tinyBtn(Icons.delete_outline, () => onDelete(id, title),
+                color: _kRed),
+      ]),
+    ]),
+  );
+}
 
   Widget _tinyBtn(IconData icon, VoidCallback onTap, {Color color = _kMuted}) =>
       GestureDetector(onTap: onTap,

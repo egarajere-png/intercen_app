@@ -676,30 +676,30 @@ class _ContentUpdatePageState extends State<ContentUpdatePage> {
                     const SizedBox(height: 20),
 
                     // ── Toolbar ───────────────────────────────────────────
-                    Wrap(spacing: 10, runSpacing: 10, children: [
-                      _ToolBtn(
-                        icon: Icons.history_rounded,
-                        label: 'Version History',
-                        onTap: _loadVersionHistory,
-                      ),
-                      // Publish Now (matches TSX)
-                      _ToolBtn(
-                        icon: Icons.publish_rounded,
-                        label: 'Publish Now',
-                        onTap: () => Navigator.pushNamed(
-                            context, '/content/publish/$_contentId'),
-                      ),
-                      // Refresh (matches TSX)
-                      _ToolBtn(
-                        icon: Icons.refresh_rounded,
-                        label: 'Refresh',
-                        onTap: () async {
-                          await Future.wait(
-                              [_loadContent(), _loadCategories()]);
-                        },
-                      ),
-                    ]),
-                    const SizedBox(height: 20),
+                    // Wrap(spacing: 10, runSpacing: 10, children: [
+                    //   _ToolBtn(
+                    //     icon: Icons.history_rounded,
+                    //     label: 'Version History',
+                    //     onTap: _loadVersionHistory,
+                    //   ),
+                    //   // Publish Now (matches TSX)
+                    //   _ToolBtn(
+                    //     icon: Icons.publish_rounded,
+                    //     label: 'Publish Now',
+                    //     onTap: () => Navigator.pushNamed(
+                    //         context, '/content/publish/_contentId'),
+                    //   ),
+                    //   // Refresh (matches TSX)
+                    //   _ToolBtn(
+                    //     icon: Icons.refresh_rounded,
+                    //     label: 'Refresh',
+                    //     onTap: () async {
+                    //       await Future.wait(
+                    //           [_loadContent(), _loadCategories()]);
+                    //     },
+                    //   ),
+                    // ]),
+                    // const SizedBox(height: 20),
 
                     // ── Current Files ─────────────────────────────────────
                     _sectionCard(
@@ -745,10 +745,10 @@ class _ContentUpdatePageState extends State<ContentUpdatePage> {
                     const SizedBox(height: 16),
 
                     // ── Version history panel ─────────────────────────────
-                    if (_showHistory) ...[
-                      _versionHistoryPanel(),
-                      const SizedBox(height: 16),
-                    ],
+                    // if (_showHistory) ...[
+                    //   _versionHistoryPanel(),
+                    //   const SizedBox(height: 16),
+                    // ],
 
                     // ── Basic Information ─────────────────────────────────
                     _sectionCard(
@@ -1309,29 +1309,29 @@ class _ContentUpdatePageState extends State<ContentUpdatePage> {
             ),
           ),
 
-          const SizedBox(height: 10),
-          RichText(
-            text: const TextSpan(
-              style: TextStyle(
-                  fontFamily: 'DM Sans',
-                  fontSize: 11,
-                  color: _kMutedLt),
-              children: [
-                TextSpan(text: 'Linking sets '),
-                TextSpan(
-                    text: 'content_owner',
-                    style: TextStyle(
-                        fontFamily: 'DM Mono',
-                        fontSize: 10,
-                        color: _kCharcoal,
-                        backgroundColor: Color(0xFFF3F4F6))),
-                TextSpan(
-                    text: ' to the selected author\'s UUID. '
-                        'Changes save immediately. Only '
-                        'author-role accounts appear in results.'),
-              ],
-            ),
-          ),
+          // const SizedBox(height: 10),
+          // RichText(
+          //   text: const TextSpan(
+          //     style: TextStyle(
+          //         fontFamily: 'DM Sans',
+          //         fontSize: 11,
+          //         color: _kMutedLt),
+          //     children: [
+          //       TextSpan(text: 'Linking sets '),
+          //       TextSpan(
+          //           text: 'content_owner',
+          //           style: TextStyle(
+          //               fontFamily: 'DM Mono',
+          //               fontSize: 10,
+          //               color: _kCharcoal,
+          //               backgroundColor: Color(0xFFF3F4F6))),
+          //       TextSpan(
+          //           text: ' to the selected author\'s UUID. '
+          //               'Changes save immediately. Only '
+          //               'author-role accounts appear in results.'),
+          //     ],
+          //   ),
+          // ),
         ],
       );
 
