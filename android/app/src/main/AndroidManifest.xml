@@ -1,17 +1,48 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Permissions -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="29"/>
+    <!-- ============================================================ -->
+    <!-- PERMISSIONS -->
+    <!-- ============================================================ -->
+
+    <!-- Network -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
+    <!-- Storage — scoped storage used on Android 10+, full access below -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29"/>
+
+    <!-- Android 13+ granular media permissions -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
+
+    <!-- Camera — for image picker -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+
+    <!-- Vibration — for feedback -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
+
+    <!-- ============================================================ -->
+    <!-- APPLICATION -->
+    <!-- ============================================================ -->
 
     <application
         android:label="Intercen Books"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:hardwareAccelerated="true"
+        android:enableOnBackInvokedCallback="true"
+        android:requestLegacyExternalStorage="true"
+        android:allowBackup="false"
+        android:fullBackupContent="false">
+
+        <!-- ============================================================ -->
+        <!-- MAIN ACTIVITY -->
+        <!-- ============================================================ -->
 
         <activity
             android:name=".MainActivity"
@@ -48,10 +79,26 @@
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="intercen" android:host="payment-callback"/>
+                <data
+                    android:scheme="intercen"
+                    android:host="payment-callback"/>
+            </intent-filter>
+
+            <!-- App Links — for verified https deep links -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="https"
+                    android:host="intercenbooks.co.ke"/>
             </intent-filter>
 
         </activity>
+
+        <!-- ============================================================ -->
+        <!-- FILE PROVIDER — for sharing files, image picker, downloads -->
+        <!-- ============================================================ -->
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -63,19 +110,56 @@
                 android:resource="@xml/file_paths"/>
         </provider>
 
-        <!-- Required by the Flutter tool -->
+        <!-- ============================================================ -->
+        <!-- FLUTTER -->
+        <!-- ============================================================ -->
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2"/>
 
     </application>
 
-    <!-- Required for Flutter text processing plugin -->
+    <!-- ============================================================ -->
+    <!-- QUERIES — declare intents this app may call -->
+    <!-- ============================================================ -->
+
     <queries>
+
+        <!-- Text processing — Flutter text plugin -->
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+
+        <!-- Browser — for url_launcher -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="http"/>
+        </intent>
+
+        <!-- Email — for url_launcher mailto -->
+        <intent>
+            <action android:name="android.intent.action.SENDTO"/>
+            <data android:scheme="mailto"/>
+        </intent>
+
+        <!-- Phone — for url_launcher tel -->
+        <intent>
+            <action android:name="android.intent.action.DIAL"/>
+            <data android:scheme="tel"/>
+        </intent>
+
+        <!-- PDF viewer -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:mimeType="application/pdf"/>
+        </intent>
+
     </queries>
 
 </manifest>

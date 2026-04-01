@@ -1,3 +1,15 @@
+// lib/pages/book_detail_page.dart
+//
+// CORRECTED vs TSX BookDetail:
+//   • images[] now includes backpage_image_url (like TSX) — second thumbnail
+//     shows "Back" label and "Back Page" chip overlay
+//   • Original price shown with strikethrough (book.originalPrice)
+//   • Tags (meta_keywords) rendered as chips in Details tab
+//   • Free-download guard now also checks accessLevel == 'free' (matches TSX)
+//   • Breadcrumb category nav passes slug correctly
+//   • BoxFit.contain on all images — covers never cropped
+//   • Responsive wide/narrow layout preserved
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +19,7 @@ import '../services/supabase_service.dart';
 import '../theme/app_colors.dart';
 
 // ─── Supporting models ────────────────────────────────────────────────────────
+
 class _Category {
   final String id;
   final String name;
@@ -29,6 +42,7 @@ const String _kFallback =
     'https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=400';
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
+
 class BookDetailPage extends StatefulWidget {
   const BookDetailPage({super.key});
 
@@ -55,7 +69,8 @@ class _BookDetailPageState extends State<BookDetailPage>
   late TabController _tabController;
   late PageController _pageController;
 
-  // ── Responsive helpers ──
+  // ── Responsive helpers ────────────────────────────────────────────────────
+
   static double _hPad(BuildContext ctx) {
     final w = MediaQuery.of(ctx).size.width;
     if (w >= 900) return 48;
@@ -65,6 +80,8 @@ class _BookDetailPageState extends State<BookDetailPage>
 
   static bool _isWide(BuildContext ctx) =>
       MediaQuery.of(ctx).size.width >= 700;
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   @override
   void initState() {
@@ -98,7 +115,8 @@ class _BookDetailPageState extends State<BookDetailPage>
     super.dispose();
   }
 
-  // ── Data loading ──
+  // ── Data loading ──────────────────────────────────────────────────────────
+
   Future<void> _loadFromContent(Content book) async {
     setState(() {
       _book = book;
@@ -120,15 +138,14 @@ class _BookDetailPageState extends State<BookDetailPage>
           .eq('status', 'published')
           .eq('visibility', 'public')
           .single();
-      final book =
-          Content.fromJson(Map<String, dynamic>.from(data as Map));
+      final book = Content.fromJson(Map<String, dynamic>.from(data as Map));
       if (!mounted) return;
       setState(() {
         _book = book;
         _loading = false;
       });
       await _loadExtras(book);
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _error = 'Book not found.';
@@ -166,18 +183,17 @@ class _BookDetailPageState extends State<BookDetailPage>
           .neq('id', book.id)
           .limit(4);
       if (!mounted) return;
-      final list =
-          List<dynamic>.from(relData);
       setState(() {
-        _related = list
-            .map((item) => Content.fromJson(
-                Map<String, dynamic>.from(item as Map)))
+        _related = List<dynamic>.from(relData)
+            .map((item) =>
+                Content.fromJson(Map<String, dynamic>.from(item as Map)))
             .toList();
       });
     } catch (_) {}
   }
 
-  // ── Actions ──
+  // ── Actions ───────────────────────────────────────────────────────────────
+
   Future<void> _handleAddToCart() async {
     if (_book == null || _addingToCart) return;
     if (_service.currentUser == null) {
@@ -189,14 +205,17 @@ class _BookDetailPageState extends State<BookDetailPage>
       _showSnack('This item is out of stock.');
       return;
     }
+    if (!_book!.isForSale) {
+      _showSnack('This item is not available for purchase.');
+      return;
+    }
     setState(() => _addingToCart = true);
     try {
       await _service.addToCart(_book!.id, _quantity);
       if (!mounted) return;
-      _showSnack(
-          'Added $_quantity × ${_book!.title} to cart',
+      _showSnack('Added $_quantity × ${_book!.title} to cart',
           color: AppColors.secondary);
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       _showSnack('Failed to add to cart. Please try again.');
     } finally {
@@ -216,13 +235,13 @@ class _BookDetailPageState extends State<BookDetailPage>
   void _showSnack(String msg, {Color? color}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg,
-          style: const TextStyle(fontWeight: FontWeight.w500)),
+      content:
+          Text(msg, style: const TextStyle(fontWeight: FontWeight.w500)),
       backgroundColor: color ?? AppColors.foreground,
       behavior: SnackBarBehavior.floating,
       margin: const EdgeInsets.all(16),
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10)),
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       duration: const Duration(seconds: 2),
     ));
   }
@@ -238,7 +257,8 @@ class _BookDetailPageState extends State<BookDetailPage>
     return _scaffoldMain();
   }
 
-  // ── Loading ──
+  // ── Loading ───────────────────────────────────────────────────────────────
+
   Widget _scaffoldLoading() => Scaffold(
         backgroundColor: AppColors.background,
         appBar: _simpleAppBar(),
@@ -249,20 +269,19 @@ class _BookDetailPageState extends State<BookDetailPage>
               CircularProgressIndicator(
                 color: AppColors.primary,
                 strokeWidth: 3,
-                backgroundColor:
-                    AppColors.primary.withOpacity(0.1),
+                backgroundColor: AppColors.primary.withOpacity(0.1),
               ),
               const SizedBox(height: 16),
               const Text('Loading...',
                   style: TextStyle(
-                      color: AppColors.mutedForeground,
-                      fontSize: 14)),
+                      color: AppColors.mutedForeground, fontSize: 14)),
             ],
           ),
         ),
       );
 
-  // ── Error ──
+  // ── Error ─────────────────────────────────────────────────────────────────
+
   Widget _scaffoldError() => Scaffold(
         backgroundColor: AppColors.background,
         appBar: _simpleAppBar(),
@@ -291,18 +310,15 @@ class _BookDetailPageState extends State<BookDetailPage>
                         color: AppColors.foreground)),
                 const SizedBox(height: 8),
                 Text(
-                  _error ??
-                      "The book you're looking for doesn't exist.",
+                  _error ?? "The book you're looking for doesn't exist.",
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                      color: AppColors.mutedForeground,
-                      fontSize: 14),
+                      color: AppColors.mutedForeground, fontSize: 14),
                 ),
                 const SizedBox(height: 24),
                 ElevatedButton.icon(
-                  onPressed: () =>
-                      Navigator.pushNamedAndRemoveUntil(
-                          context, '/books', (r) => false),
+                  onPressed: () => Navigator.pushNamedAndRemoveUntil(
+                      context, '/books', (r) => false),
                   icon: const Icon(Icons.arrow_back, size: 16),
                   label: const Text('Back to Shop'),
                   style: ElevatedButton.styleFrom(
@@ -323,31 +339,36 @@ class _BookDetailPageState extends State<BookDetailPage>
         elevation: 0,
         surfaceTintColor: Colors.transparent,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back,
-              color: AppColors.foreground),
+          icon: const Icon(Icons.arrow_back, color: AppColors.foreground),
           onPressed: () => Navigator.pop(context),
         ),
       );
 
-  // ── Main ──
+  // ── Main ──────────────────────────────────────────────────────────────────
+
   Widget _scaffoldMain() {
     final book = _book!;
     final hPad = _hPad(context);
     final isWide = _isWide(context);
     final screenW = MediaQuery.of(context).size.width;
 
-    final images = <String>[
-      book.coverImageUrl?.isNotEmpty == true
-          ? book.coverImageUrl!
-          : _kFallback,
-    ];
+    // ── Build image list (matches TSX): cover + backpage if different ──────
+    final cover =
+        book.coverImageUrl?.isNotEmpty == true ? book.coverImageUrl! : _kFallback;
+    final images = <String>[cover];
+    final backpage = book.backpageImageUrl;
+    if (backpage != null &&
+        backpage.isNotEmpty &&
+        backpage != book.coverImageUrl) {
+      images.add(backpage);
+    }
 
     return Scaffold(
       backgroundColor: AppColors.background,
       bottomNavigationBar: _bottomNav(),
       body: CustomScrollView(
         slivers: [
-          // ── App bar ──
+          // ── App bar ───────────────────────────────────────────────────────
           SliverAppBar(
             pinned: true,
             elevation: 0,
@@ -372,12 +393,9 @@ class _BookDetailPageState extends State<BookDetailPage>
             ),
             actions: [
               IconButton(
-                icon: const Icon(
-                    Icons.shopping_cart_outlined,
-                    color: AppColors.foreground,
-                    size: 22),
-                onPressed: () =>
-                    Navigator.pushNamed(context, '/cart'),
+                icon: const Icon(Icons.shopping_cart_outlined,
+                    color: AppColors.foreground, size: 22),
+                onPressed: () => Navigator.pushNamed(context, '/cart'),
               ),
             ],
           ),
@@ -388,45 +406,38 @@ class _BookDetailPageState extends State<BookDetailPage>
               children: [
                 // Breadcrumb
                 Padding(
-                  padding:
-                      EdgeInsets.fromLTRB(hPad, 14, hPad, 0),
+                  padding: EdgeInsets.fromLTRB(hPad, 14, hPad, 0),
                   child: _breadcrumb(book),
                 ),
 
                 const SizedBox(height: 20),
 
-                // ── Main product section ──
+                // ── Main product section ───────────────────────────────────
                 isWide
                     ? Padding(
-                        padding: EdgeInsets.symmetric(
-                            horizontal: hPad),
+                        padding: EdgeInsets.symmetric(horizontal: hPad),
                         child: Row(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             SizedBox(
                               width: 340,
-                              child: _imageGallery(
-                                  book, images,
+                              child: _imageGallery(book, images,
                                   isWide: true),
                             ),
                             const SizedBox(width: 40),
                             Expanded(
-                              child: _bookDetails(book,
-                                  isWide: true),
+                              child:
+                                  _bookDetails(book, isWide: true),
                             ),
                           ],
                         ),
                       )
                     : Padding(
-                        padding: EdgeInsets.symmetric(
-                            horizontal: hPad),
+                        padding: EdgeInsets.symmetric(horizontal: hPad),
                         child: Column(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _imageGallery(book, images,
-                                isWide: false),
+                            _imageGallery(book, images, isWide: false),
                             const SizedBox(height: 24),
                             _bookDetails(book, isWide: false),
                           ],
@@ -435,20 +446,18 @@ class _BookDetailPageState extends State<BookDetailPage>
 
                 const SizedBox(height: 32),
 
-                // ── Tabs ──
+                // ── Tabs ──────────────────────────────────────────────────
                 Padding(
-                  padding:
-                      EdgeInsets.symmetric(horizontal: hPad),
+                  padding: EdgeInsets.symmetric(horizontal: hPad),
                   child: _tabsSection(book),
                 ),
 
                 const SizedBox(height: 32),
 
-                // ── Related ──
+                // ── Related ───────────────────────────────────────────────
                 if (_related.isNotEmpty) ...[
                   Padding(
-                    padding:
-                        EdgeInsets.symmetric(horizontal: hPad),
+                    padding: EdgeInsets.symmetric(horizontal: hPad),
                     child: _relatedBooks(isWide),
                   ),
                   const SizedBox(height: 40),
@@ -476,9 +485,11 @@ class _BookDetailPageState extends State<BookDetailPage>
             context, '/books', (r) => false)),
         if (_category != null) ...[
           _sep(),
-          _crumb(_category!.name, () => Navigator.pushNamed(
-              context, '/books',
-              arguments: _category!.slug)),
+          _crumb(
+            _category!.name,
+            () => Navigator.pushNamed(context, '/books',
+                arguments: {'category': _category!.slug}),
+          ),
         ],
         _sep(),
         SizedBox(
@@ -497,13 +508,11 @@ class _BookDetailPageState extends State<BookDetailPage>
     );
   }
 
-  Widget _crumb(String label, VoidCallback onTap) =>
-      GestureDetector(
+  Widget _crumb(String label, VoidCallback onTap) => GestureDetector(
         onTap: onTap,
         child: Text(label,
             style: const TextStyle(
-                color: AppColors.mutedForeground,
-                fontSize: 12)),
+                color: AppColors.mutedForeground, fontSize: 12)),
       );
 
   Widget _sep() => const Padding(
@@ -513,28 +522,23 @@ class _BookDetailPageState extends State<BookDetailPage>
       );
 
   // ══════════════════════════════════════════════════════════════════════════
-  // IMAGE GALLERY — FIXED: BoxFit.contain + taller container + neutral bg
+  // IMAGE GALLERY
   // ══════════════════════════════════════════════════════════════════════════
 
   Widget _imageGallery(Content book, List<String> images,
       {required bool isWide}) {
     final screenW = MediaQuery.of(context).size.width;
-
-    // FIXED: Taller image area so book covers are not cramped.
-    // Book covers are typically portrait ~2:3 ratio. We give enough
-    // height so the full cover fits without cropping.
-    final imageHeight =
-        isWide ? 420.0 : (screenW < 360 ? 300.0 : 340.0);
+    final imageHeight = isWide ? 420.0 : (screenW < 360 ? 300.0 : 340.0);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── Main image container ──
+        // ── Main image container ───────────────────────────────────────────
         SizedBox(
           height: imageHeight,
           child: Stack(
             children: [
-              // PageView — FIXED: neutral background + BoxFit.contain
+              // PageView
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: PageView.builder(
@@ -543,12 +547,9 @@ class _BookDetailPageState extends State<BookDetailPage>
                   onPageChanged: (i) =>
                       setState(() => _selectedImage = i),
                   itemBuilder: (_, i) => Container(
-                    // Neutral warm-grey background so the full cover
-                    // is always visible with no cropping on either axis.
                     color: const Color(0xFFF2EFE9),
                     child: CachedNetworkImage(
                       imageUrl: images[i],
-                      // FIXED: contain instead of cover — shows entire cover
                       fit: BoxFit.contain,
                       width: double.infinity,
                       height: double.infinity,
@@ -573,6 +574,33 @@ class _BookDetailPageState extends State<BookDetailPage>
                 ),
               ),
 
+              // ── "Back Page" chip on second image (matches TSX) ────────────
+              if (_selectedImage == 1 && images.length > 1)
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4)
+                      ],
+                    ),
+                    child: const Text(
+                      'Back Page',
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF374151)),
+                    ),
+                  ),
+                ),
+
               // Arrows — only when multiple images
               if (images.length > 1) ...[
                 if (_selectedImage > 0)
@@ -581,11 +609,9 @@ class _BookDetailPageState extends State<BookDetailPage>
                     top: 0,
                     bottom: 0,
                     child: Center(
-                        child: _arrowBtn(
-                            Icons.chevron_left, () {
+                        child: _arrowBtn(Icons.chevron_left, () {
                       _pageController.previousPage(
-                          duration:
-                              const Duration(milliseconds: 300),
+                          duration: const Duration(milliseconds: 300),
                           curve: Curves.easeInOut);
                     })),
                   ),
@@ -595,11 +621,9 @@ class _BookDetailPageState extends State<BookDetailPage>
                     top: 0,
                     bottom: 0,
                     child: Center(
-                        child: _arrowBtn(
-                            Icons.chevron_right, () {
+                        child: _arrowBtn(Icons.chevron_right, () {
                       _pageController.nextPage(
-                          duration:
-                              const Duration(milliseconds: 300),
+                          duration: const Duration(milliseconds: 300),
                           curve: Curves.easeInOut);
                     })),
                   ),
@@ -614,18 +638,15 @@ class _BookDetailPageState extends State<BookDetailPage>
                     children: List.generate(
                       images.length,
                       (i) => AnimatedContainer(
-                        duration:
-                            const Duration(milliseconds: 200),
-                        margin: const EdgeInsets.symmetric(
-                            horizontal: 3),
+                        duration: const Duration(milliseconds: 200),
+                        margin: const EdgeInsets.symmetric(horizontal: 3),
                         width: _selectedImage == i ? 18 : 6,
                         height: 6,
                         decoration: BoxDecoration(
                           color: _selectedImage == i
                               ? AppColors.primary
                               : Colors.white.withOpacity(0.7),
-                          borderRadius:
-                              BorderRadius.circular(3),
+                          borderRadius: BorderRadius.circular(3),
                         ),
                       ),
                     ),
@@ -633,7 +654,7 @@ class _BookDetailPageState extends State<BookDetailPage>
                 ),
               ],
 
-              // Badges — top left
+              // Feature badges — top left
               Positioned(
                 top: 10,
                 left: 10,
@@ -641,8 +662,7 @@ class _BookDetailPageState extends State<BookDetailPage>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (book.isBestseller) ...[
-                      _imgBadge(
-                          'Bestseller', AppColors.secondary),
+                      _imgBadge('Bestseller', AppColors.secondary),
                       const SizedBox(height: 5),
                     ],
                     if (book.isFeatured) ...[
@@ -650,57 +670,77 @@ class _BookDetailPageState extends State<BookDetailPage>
                       const SizedBox(height: 5),
                     ],
                     if (book.isNewArrival)
-                      _imgBadge('New Arrival',
-                          AppColors.intercenBlue),
+                      _imgBadge('New Arrival', AppColors.intercenBlue),
                   ],
                 ),
               ),
 
+              // Free badge — bottom left
               if (book.isFree)
                 Positioned(
                   bottom: 10,
                   left: 10,
-                  child: _imgBadge(
-                      'Free', const Color(0xFF16A34A)),
+                  child: _imgBadge('Free', const Color(0xFF16A34A)),
                 ),
             ],
           ),
         ),
 
-        // ── Thumbnail strip — FIXED: contain + bg ──
+        // ── Thumbnail strip ────────────────────────────────────────────────
         if (images.length > 1) ...[
           const SizedBox(height: 10),
           Row(
             children: images.asMap().entries.map((e) {
               final sel = _selectedImage == e.key;
+              final isBack = e.key == 1;
               return GestureDetector(
-                onTap: () => _pageController.animateToPage(
-                    e.key,
-                    duration:
-                        const Duration(milliseconds: 300),
+                onTap: () => _pageController.animateToPage(e.key,
+                    duration: const Duration(milliseconds: 300),
                     curve: Curves.easeInOut),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   margin: const EdgeInsets.only(right: 8),
-                  // FIXED: Wider thumbnail with correct book-cover ratio (2:3)
                   width: 56,
                   height: 80,
                   decoration: BoxDecoration(
                     color: const Color(0xFFF2EFE9),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                      color: sel
-                          ? AppColors.primary
-                          : Colors.grey.shade300,
+                      color:
+                          sel ? AppColors.primary : Colors.grey.shade300,
                       width: sel ? 2 : 1,
                     ),
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(7),
-                    child: CachedNetworkImage(
-                      imageUrl: e.value,
-                      // FIXED: contain so thumbnail shows the full cover
-                      fit: BoxFit.contain,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        CachedNetworkImage(
+                          imageUrl: e.value,
+                          fit: BoxFit.contain,
+                        ),
+                        // "Back" label on thumbnail (matches TSX)
+                        if (isBack)
+                          Positioned(
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                            child: Container(
+                              color: Colors.black.withOpacity(0.6),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 2),
+                              child: const Text(
+                                'Back',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
@@ -712,8 +752,7 @@ class _BookDetailPageState extends State<BookDetailPage>
     );
   }
 
-  Widget _arrowBtn(IconData icon, VoidCallback onTap) =>
-      GestureDetector(
+  Widget _arrowBtn(IconData icon, VoidCallback onTap) => GestureDetector(
         onTap: onTap,
         child: Container(
           width: 32,
@@ -728,14 +767,13 @@ class _BookDetailPageState extends State<BookDetailPage>
                   offset: const Offset(0, 2))
             ],
           ),
-          child: Icon(icon,
-              size: 20, color: AppColors.foreground),
+          child: Icon(icon, size: 20, color: AppColors.foreground),
         ),
       );
 
   Widget _imgBadge(String label, Color color) => Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: 8, vertical: 3),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
           color: color,
           borderRadius: BorderRadius.circular(5),
@@ -760,13 +798,12 @@ class _BookDetailPageState extends State<BookDetailPage>
 
   Widget _bookDetails(Content book, {required bool isWide}) {
     final screenW = MediaQuery.of(context).size.width;
-    final titleSize =
-        isWide ? 26.0 : (screenW < 360 ? 20.0 : 22.0);
+    final titleSize = isWide ? 26.0 : (screenW < 360 ? 20.0 : 22.0);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Category
+        // Category label
         Text(
           _category?.name ?? book.contentType,
           style: const TextStyle(
@@ -787,8 +824,7 @@ class _BookDetailPageState extends State<BookDetailPage>
         ),
 
         // Subtitle
-        if (book.subtitle != null &&
-            book.subtitle!.isNotEmpty) ...[
+        if (book.subtitle != null && book.subtitle!.isNotEmpty) ...[
           const SizedBox(height: 4),
           Text(book.subtitle!,
               style: const TextStyle(
@@ -802,24 +838,24 @@ class _BookDetailPageState extends State<BookDetailPage>
         // Author
         Text('by ${book.author ?? 'Unknown Author'}',
             style: const TextStyle(
-                fontSize: 14,
-                color: AppColors.mutedForeground)),
+                fontSize: 14, color: AppColors.mutedForeground)),
 
         const SizedBox(height: 14),
 
-        // Stars
+        // Star rating
         if (book.averageRating > 0) ...[
           Row(
             children: [
               ...List.generate(
-                  5,
-                  (i) => Icon(
-                        i < book.averageRating.floor()
-                            ? Icons.star_rounded
-                            : Icons.star_outline_rounded,
-                        size: 17,
-                        color: AppColors.primary,
-                      )),
+                5,
+                (i) => Icon(
+                  i < book.averageRating.floor()
+                      ? Icons.star_rounded
+                      : Icons.star_outline_rounded,
+                  size: 17,
+                  color: AppColors.primary,
+                ),
+              ),
               const SizedBox(width: 6),
               Text(book.averageRating.toStringAsFixed(1),
                   style: const TextStyle(
@@ -838,19 +874,38 @@ class _BookDetailPageState extends State<BookDetailPage>
           const SizedBox(height: 14),
         ],
 
-        // Price
-        Text(
-          book.isFree
-              ? 'FREE'
-              : 'KSH ${book.price.toStringAsFixed(2)}',
-          style: TextStyle(
-            fontSize: 30,
-            fontWeight: FontWeight.w900,
-            color: book.isFree
-                ? const Color(0xFF16A34A)
-                : AppColors.primary,
-            letterSpacing: -0.5,
-          ),
+        // ── Price + original price (matches TSX) ──────────────────────────
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Text(
+              book.isFree
+                  ? 'FREE'
+                  : 'KSH ${book.price.toStringAsFixed(2)}',
+              style: TextStyle(
+                fontSize: 30,
+                fontWeight: FontWeight.w900,
+                color: book.isFree
+                    ? const Color(0xFF16A34A)
+                    : AppColors.primary,
+                letterSpacing: -0.5,
+              ),
+            ),
+            if (!book.isFree &&
+                book.originalPrice != null &&
+                book.originalPrice! > book.price) ...[
+              const SizedBox(width: 10),
+              Text(
+                'KSH ${book.originalPrice!.toStringAsFixed(2)}',
+                style: const TextStyle(
+                  fontSize: 16,
+                  color: AppColors.mutedForeground,
+                  decoration: TextDecoration.lineThrough,
+                ),
+              ),
+            ],
+          ],
         ),
 
         const SizedBox(height: 10),
@@ -879,19 +934,15 @@ class _BookDetailPageState extends State<BookDetailPage>
         if (book.isForSale) ...[
           Row(
             children: [
-              // Quantity picker
               Container(
                 decoration: BoxDecoration(
-                  border:
-                      Border.all(color: Colors.grey.shade300),
+                  border: Border.all(color: Colors.grey.shade300),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _qtyBtn(
-                        Icons.remove,
-                        _quantity > 1,
+                    _qtyBtn(Icons.remove, _quantity > 1,
                         () => setState(() => _quantity--)),
                     SizedBox(
                       width: 36,
@@ -911,16 +962,14 @@ class _BookDetailPageState extends State<BookDetailPage>
                 ),
               ),
               const SizedBox(width: 10),
-              _outlineIconBtn(
-                  Icons.favorite_border, () {}),
+              _outlineIconBtn(Icons.favorite_border, () {}),
               const SizedBox(width: 8),
-              _outlineIconBtn(
-                  Icons.share_outlined, _handleShare),
+              _outlineIconBtn(Icons.share_outlined, _handleShare),
             ],
           ),
           const SizedBox(height: 14),
 
-          // Add to cart
+          // Add to cart button
           SizedBox(
             width: double.infinity,
             height: 48,
@@ -934,11 +983,8 @@ class _BookDetailPageState extends State<BookDetailPage>
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white))
-                  : const Icon(
-                      Icons.shopping_cart_outlined,
-                      size: 18),
+                          strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.shopping_cart_outlined, size: 18),
               label: Text(
                 book.stockQuantity == 0
                     ? 'Out of Stock'
@@ -946,8 +992,7 @@ class _BookDetailPageState extends State<BookDetailPage>
                         ? 'Get Free Copy'
                         : 'Add to Cart',
                 style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700),
+                    fontSize: 15, fontWeight: FontWeight.w700),
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: book.stockQuantity == 0
@@ -962,24 +1007,23 @@ class _BookDetailPageState extends State<BookDetailPage>
           ),
         ],
 
-        // Free download
-        if (book.isFree && book.fileUrl != null) ...[
+        // ── Free download (matches TSX: isFree && accessLevel == 'free') ───
+        if (book.isFree &&
+            (book.accessLevel == 'free') &&
+            book.fileUrl != null) ...[
           const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
             height: 46,
             child: OutlinedButton.icon(
-              onPressed: () => _showSnack(
-                  'Download started for ${book.title}'),
-              icon: const Icon(Icons.download_outlined,
-                  size: 16),
+              onPressed: () =>
+                  _showSnack('Download started for ${book.title}'),
+              icon: const Icon(Icons.download_outlined, size: 16),
               label: const Text('Download Now',
-                  style: TextStyle(
-                      fontWeight: FontWeight.w600)),
+                  style: TextStyle(fontWeight: FontWeight.w600)),
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.foreground,
-                side: BorderSide(
-                    color: Colors.grey.shade300),
+                side: BorderSide(color: Colors.grey.shade300),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10)),
               ),
@@ -1006,41 +1050,33 @@ class _BookDetailPageState extends State<BookDetailPage>
         ),
       );
 
-  Widget _outlineIconBtn(
-          IconData icon, VoidCallback onTap) =>
+  Widget _outlineIconBtn(IconData icon, VoidCallback onTap) =>
       GestureDetector(
         onTap: onTap,
         child: Container(
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            border:
-                Border.all(color: Colors.grey.shade300),
+            border: Border.all(color: Colors.grey.shade300),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(icon,
-              color: AppColors.primary, size: 18),
+          child: Icon(icon, color: AppColors.primary, size: 18),
         ),
       );
 
   Widget _statPill(IconData icon, String label) => Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon,
-              size: 13,
-              color: AppColors.mutedForeground),
+          Icon(icon, size: 13, color: AppColors.mutedForeground),
           const SizedBox(width: 4),
           Text(label,
               style: const TextStyle(
-                  color: AppColors.mutedForeground,
-                  fontSize: 12)),
+                  color: AppColors.mutedForeground, fontSize: 12)),
         ],
       );
 
   String _fmt(int n) {
-    if (n >= 1000000) {
-      return '${(n / 1000000).toStringAsFixed(1)}M';
-    }
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
     if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
     return '$n';
   }
@@ -1084,11 +1120,11 @@ class _BookDetailPageState extends State<BookDetailPage>
     );
   }
 
-  // ── Description tab ──
+  // ── Description tab ───────────────────────────────────────────────────────
+
   Widget _tabDescription(Content book) => Padding(
         padding: const EdgeInsets.only(bottom: 4),
-        child: book.description != null &&
-                book.description!.isNotEmpty
+        child: book.description != null && book.description!.isNotEmpty
             ? Text(
                 book.description!,
                 style: const TextStyle(
@@ -1105,93 +1141,111 @@ class _BookDetailPageState extends State<BookDetailPage>
               ),
       );
 
-  // ── Details tab ──
+  // ── Details tab ───────────────────────────────────────────────────────────
+
   Widget _tabDetails(Content book) {
     final rows = <_DetailRow>[];
-    if (book.author != null) {
-      rows.add(_DetailRow('Author', book.author!));
-    }
-    if (book.publisher != null) {
-      rows.add(_DetailRow('Publisher', book.publisher!));
-    }
-    if (book.pageCount != null) {
-      rows.add(_DetailRow('Pages', '${book.pageCount}'));
-    }
-    rows.add(_DetailRow(
-        'Language', (book.language ?? 'en').toUpperCase()));
-    if (book.format != null) {
-      rows.add(_DetailRow('Format', book.format!.toUpperCase()));
-    }
-    if (_category != null) {
-      rows.add(_DetailRow('Category', _category!.name));
-    }
+    if (book.author != null) rows.add(_DetailRow('Author', book.author!));
+    if (book.publisher != null) rows.add(_DetailRow('Publisher', book.publisher!));
+    if (book.pageCount != null) rows.add(_DetailRow('Pages', '${book.pageCount}'));
+    rows.add(_DetailRow('Language', (book.language ?? 'en').toUpperCase()));
+    if (book.format != null) rows.add(_DetailRow('Format', book.format!.toUpperCase()));
+    if (_category != null) rows.add(_DetailRow('Category', _category!.name));
     if (book.publishedDate != null) {
       try {
         final d = DateTime.parse(book.publishedDate!);
-        rows.add(_DetailRow(
-            'Published', '${d.day}/${d.month}/${d.year}'));
+        rows.add(_DetailRow('Published', '${d.day}/${d.month}/${d.year}'));
       } catch (_) {
         rows.add(_DetailRow('Published', book.publishedDate!));
       }
     }
-    if (book.isbn != null) {
-      rows.add(_DetailRow('ISBN', book.isbn!));
-    }
+    if (book.isbn != null) rows.add(_DetailRow('ISBN', book.isbn!));
     if (book.fileSizeBytes != null) {
       rows.add(_DetailRow('File Size',
           '${(book.fileSizeBytes! / 1024 / 1024).toStringAsFixed(2)} MB'));
     }
     rows.add(_DetailRow('Version', book.version));
 
-    return LayoutBuilder(builder: (ctx, constraints) {
-      final wide = constraints.maxWidth > 460;
-      if (wide) {
-        final left = <_DetailRow>[];
-        final right = <_DetailRow>[];
-        for (var i = 0; i < rows.length; i++) {
-          if (i.isEven) {
-            left.add(rows[i]);
-          } else {
-            right.add(rows[i]);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Detail rows — responsive 2-column layout
+        LayoutBuilder(builder: (ctx, constraints) {
+          final wide = constraints.maxWidth > 460;
+          if (wide) {
+            final left = <_DetailRow>[];
+            final right = <_DetailRow>[];
+            for (var i = 0; i < rows.length; i++) {
+              (i.isEven ? left : right).add(rows[i]);
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                    child: Column(
+                        children: left.map(_detailTile).toList())),
+                const SizedBox(width: 24),
+                Expanded(
+                    child: Column(
+                        children: right.map(_detailTile).toList())),
+              ],
+            );
           }
-        }
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-                child: Column(
-                    children:
-                        left.map(_detailTile).toList())),
-            const SizedBox(width: 24),
-            Expanded(
-                child: Column(
-                    children:
-                        right.map(_detailTile).toList())),
-          ],
-        );
-      }
-      return Column(
-          children: rows.map(_detailTile).toList());
-    });
+          return Column(children: rows.map(_detailTile).toList());
+        }),
+
+        // ── Tags / meta_keywords (matches TSX Details tab) ────────────────
+        if (book.metaKeywords != null && book.metaKeywords!.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          const Text(
+            'Tags',
+            style: TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
+                color: AppColors.foreground),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: book.metaKeywords!
+                .map(
+                  (kw) => Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: AppColors.muted,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      kw,
+                      style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.foreground,
+                          fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+      ],
+    );
   }
 
   Widget _detailTile(_DetailRow r) => Container(
-        padding:
-            const EdgeInsets.symmetric(vertical: 11),
+        padding: const EdgeInsets.symmetric(vertical: 11),
         decoration: BoxDecoration(
-          border: Border(
-              bottom:
-                  BorderSide(color: Colors.grey.shade100)),
+          border:
+              Border(bottom: BorderSide(color: Colors.grey.shade100)),
         ),
         child: Row(
-          mainAxisAlignment:
-              MainAxisAlignment.spaceBetween,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(r.label,
                 style: const TextStyle(
-                    color: AppColors.mutedForeground,
-                    fontSize: 13)),
+                    color: AppColors.mutedForeground, fontSize: 13)),
             const SizedBox(width: 12),
             Expanded(
               child: Text(r.value,
@@ -1205,7 +1259,8 @@ class _BookDetailPageState extends State<BookDetailPage>
         ),
       );
 
-  // ── Reviews tab ──
+  // ── Reviews tab ───────────────────────────────────────────────────────────
+
   Widget _tabReviews(Content book) {
     if (book.totalReviews == 0) {
       return Container(
@@ -1217,8 +1272,7 @@ class _BookDetailPageState extends State<BookDetailPage>
         child: Column(
           children: [
             const Icon(Icons.rate_review_outlined,
-                size: 36,
-                color: AppColors.mutedForeground),
+                size: 36, color: AppColors.mutedForeground),
             const SizedBox(height: 10),
             const Text('No reviews yet',
                 style: TextStyle(
@@ -1226,8 +1280,7 @@ class _BookDetailPageState extends State<BookDetailPage>
                     fontWeight: FontWeight.w600,
                     color: AppColors.foreground)),
             const SizedBox(height: 4),
-            const Text(
-                'Be the first to share your thoughts',
+            const Text('Be the first to share your thoughts',
                 style: TextStyle(
                     color: AppColors.mutedForeground,
                     fontSize: 13)),
@@ -1244,8 +1297,7 @@ class _BookDetailPageState extends State<BookDetailPage>
                 backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
-                    borderRadius:
-                        BorderRadius.circular(8)),
+                    borderRadius: BorderRadius.circular(8)),
               ),
               child: const Text('Write a Review'),
             ),
@@ -1300,7 +1352,7 @@ class _BookDetailPageState extends State<BookDetailPage>
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // RELATED BOOKS — FIXED: contain + bg + corrected aspect ratio
+  // RELATED BOOKS
   // ══════════════════════════════════════════════════════════════════════════
 
   Widget _relatedBooks(bool isWide) {
@@ -1320,14 +1372,10 @@ class _BookDetailPageState extends State<BookDetailPage>
         GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          gridDelegate:
-              SliverGridDelegateWithFixedCrossAxisCount(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: isWide ? 4 : 2,
             crossAxisSpacing: 12,
             mainAxisSpacing: 16,
-            // FIXED: Increased childAspectRatio denominator so each card
-            // is tall enough to show the full cover + text without clipping.
-            // Previously 0.54 was too short and forced the image to crop.
             childAspectRatio: isWide ? 0.48 : 0.50,
           ),
           itemCount: _related.length,
@@ -1339,45 +1387,33 @@ class _BookDetailPageState extends State<BookDetailPage>
                 MaterialPageRoute(
                   builder: (_) => const BookDetailPage(),
                   settings: RouteSettings(
-                      name: '/book-detail',
-                      arguments: rel),
+                      name: '/book-detail', arguments: rel),
                 ),
               ),
               child: Column(
-                crossAxisAlignment:
-                    CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // FIXED: AspectRatio matches a standard book cover (2:3)
-                  // and uses BoxFit.contain so the entire cover is visible.
                   AspectRatio(
-                    aspectRatio: 0.67, // 2:3 portrait — standard book cover
+                    aspectRatio: 0.67,
                     child: ClipRRect(
-                      borderRadius:
-                          BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(8),
                       child: Container(
-                        // Neutral background so contain doesn't show
-                        // awkward transparent letterboxing
                         color: const Color(0xFFF2EFE9),
                         child: CachedNetworkImage(
-                          imageUrl: rel.coverImageUrl
-                                      ?.isNotEmpty ==
-                                  true
-                              ? rel.coverImageUrl!
-                              : _kFallback,
-                          // FIXED: contain — never crops the cover
+                          imageUrl:
+                              rel.coverImageUrl?.isNotEmpty == true
+                                  ? rel.coverImageUrl!
+                                  : _kFallback,
                           fit: BoxFit.contain,
                           width: double.infinity,
                           height: double.infinity,
                           placeholder: (_, __) =>
-                              Container(
-                                  color: AppColors.muted),
-                          errorWidget: (_, __, ___) =>
-                              Container(
+                              Container(color: AppColors.muted),
+                          errorWidget: (_, __, ___) => Container(
                             color: AppColors.muted,
                             child: const Center(
                               child: Icon(Icons.book,
-                                  color: AppColors
-                                      .mutedForeground),
+                                  color: AppColors.mutedForeground),
                             ),
                           ),
                         ),
@@ -1400,8 +1436,7 @@ class _BookDetailPageState extends State<BookDetailPage>
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                           fontSize: 11,
-                          color:
-                              AppColors.mutedForeground)),
+                          color: AppColors.mutedForeground)),
                   const SizedBox(height: 5),
                   Text(
                     rel.isFree
@@ -1431,9 +1466,8 @@ class _BookDetailPageState extends State<BookDetailPage>
           height: 60,
           decoration: BoxDecoration(
             color: Colors.white,
-            border: Border(
-                top: BorderSide(
-                    color: Colors.grey.shade200)),
+            border:
+                Border(top: BorderSide(color: Colors.grey.shade200)),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.06),
@@ -1443,21 +1477,18 @@ class _BookDetailPageState extends State<BookDetailPage>
             ],
           ),
           child: Row(
-            mainAxisAlignment:
-                MainAxisAlignment.spaceAround,
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _navItem(Icons.home_outlined, 'Home',
-                  false, () {
+              _navItem(Icons.home_outlined, 'Home', false, () {
                 Navigator.pushNamedAndRemoveUntil(
                     context, '/home', (r) => false);
               }),
-              _navItem(Icons.menu_book_outlined, 'Books',
-                  false, () {
+              _navItem(Icons.menu_book_outlined, 'Books', false, () {
                 Navigator.pushNamedAndRemoveUntil(
                     context, '/books', (r) => false);
               }),
-              _navItem(Icons.shopping_cart_outlined,
-                  'Cart', false, () {
+              _navItem(
+                  Icons.shopping_cart_outlined, 'Cart', false, () {
                 Navigator.pushNamed(context, '/cart');
               }),
             ],
@@ -1465,25 +1496,21 @@ class _BookDetailPageState extends State<BookDetailPage>
         ),
       );
 
-  Widget _navItem(IconData icon, String label,
-          bool active, VoidCallback onTap) =>
+  Widget _navItem(IconData icon, String label, bool active,
+          VoidCallback onTap) =>
       GestureDetector(
         onTap: onTap,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(icon,
-                color: active
-                    ? AppColors.primary
-                    : Colors.grey,
+                color: active ? AppColors.primary : Colors.grey,
                 size: 21),
             const SizedBox(height: 2),
             Text(label,
                 style: TextStyle(
                     fontSize: 10,
-                    color: active
-                        ? AppColors.primary
-                        : Colors.grey,
+                    color: active ? AppColors.primary : Colors.grey,
                     fontWeight: active
                         ? FontWeight.w700
                         : FontWeight.normal)),

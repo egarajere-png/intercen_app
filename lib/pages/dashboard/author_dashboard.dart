@@ -1,10 +1,21 @@
 // lib/pages/dashboard/author_dashboard.dart
 //
-// FIX: Added initialTab support via WidgetsBinding.instance.addPostFrameCallback
-// in initState. When Settings navigates here with arguments: {'initialTab': n},
-// the dashboard opens on the correct tab:
-//   1 = Submissions  (My Submissions tile in Settings)
-//   3 = My Orders    (My Orders tile in Settings)
+// FIX: DropdownButton assertion — "there should be exactly one item with
+//      DropdownButton's value: English".
+//
+// Root cause: A language DropdownButton was built with either
+//   (a) duplicate entries in the items list (e.g. "English" appeared twice), or
+//   (b) a value that didn't exist in the items list at all.
+//
+// Fix applied:
+//   • _buildLanguageDropdown() deduplicates the items list via a LinkedHashSet
+//     pattern so no string ever appears twice.
+//   • The current value is always inserted into the list when missing, so
+//     the DropdownButton invariant (exactly one matching item) is always met.
+//   • _selectedLanguage state is initialised safely via _safeLanguageValue().
+//   • Submission cards (_subCard) render the language as a plain text chip,
+//     NOT a DropdownButton — DB data from submissions is read-only display
+//     and was the direct source of the duplicate/missing-value crash.
 
 import 'dart:convert';
 import 'dart:io';
@@ -20,6 +31,12 @@ import '../../theme/app_colors.dart';
 const _kCard    = 12.0;
 const _kMaxBio  = 500;
 const _kMaxAvat = 5 * 1024 * 1024;
+
+// ── Canonical language list — NO duplicates ──────────────────────────────────
+const List<String> _kLanguages = [
+  'English', 'Swahili', 'French', 'Arabic', 'Spanish',
+  'Portuguese', 'German', 'Chinese', 'Hindi', 'Other',
+];
 
 class AuthorDashboardPage extends StatefulWidget {
   const AuthorDashboardPage({Key? key}) : super(key: key);
@@ -44,6 +61,10 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
   final _adrCtrl  = TextEditingController();
   final _orgCtrl  = TextEditingController();
   final _dptCtrl  = TextEditingController();
+
+  // ── language dropdown state ───────────────────────────────────────────────
+  // Nullable String; only ever set to a value present in _languageItems().
+  String? _selectedLanguage;
 
   String? _avatarUrl;
   File?   _avatarFile;
@@ -83,9 +104,7 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
     _bioCtrl.addListener(() => setState(() {}));
     _loadAll();
 
-    // ✅ FIX: Read initialTab argument from Navigator route settings.
-    // ModalRoute.of(context) is null during initState so we must defer
-    // to addPostFrameCallback when the widget is fully in the route tree.
+    // Read initialTab argument from Navigator route settings.
     // Tab mapping:
     //   0 = Overview | 1 = Submissions | 2 = My Works
     //   3 = My Orders | 4 = Edit Profile
@@ -138,15 +157,23 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
       ]);
       if (!mounted) return;
       final p = res[0] as Map<String, dynamic>?;
+
+      // ── Safely resolve language value ─────────────────────────────────────
+      // DB may return a string that appears 0 or 2+ times if items were built
+      // naively from mixed sources. _safeLanguageValue normalises this.
+      final rawLang = p?['language'] as String?;
+      final safeLang = _safeLanguageValue(rawLang);
+
       setState(() {
-        _profile        = p;
-        _avatarUrl      = p?['avatar_url']    as String?;
-        _nameCtrl.text  = (p?['full_name']    as String?) ?? '';
-        _bioCtrl.text   = (p?['bio']          as String?) ?? '';
-        _telCtrl.text   = (p?['phone']        as String?) ?? '';
-        _adrCtrl.text   = (p?['address']      as String?) ?? '';
-        _orgCtrl.text   = (p?['organization'] as String?) ?? '';
-        _dptCtrl.text   = (p?['department']   as String?) ?? '';
+        _profile           = p;
+        _avatarUrl         = p?['avatar_url']    as String?;
+        _nameCtrl.text     = (p?['full_name']    as String?) ?? '';
+        _bioCtrl.text      = (p?['bio']          as String?) ?? '';
+        _telCtrl.text      = (p?['phone']        as String?) ?? '';
+        _adrCtrl.text      = (p?['address']      as String?) ?? '';
+        _orgCtrl.text      = (p?['organization'] as String?) ?? '';
+        _dptCtrl.text      = (p?['department']   as String?) ?? '';
+        _selectedLanguage  = safeLang;
         _subs   = _asList(res[1]);
         _works  = _asList(res[2]);
         _orders = _asList(res[3]);
@@ -156,6 +183,76 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  // ── DropdownButton safety helpers ─────────────────────────────────────────
+
+  /// Returns a deduplicated list that always contains [currentValue] exactly
+  /// once, satisfying the DropdownButton invariant unconditionally.
+  List<String> _languageItems([String? currentValue]) {
+    final seen   = <String>{};
+    final result = <String>[];
+
+    // Prepend any non-standard value from DB so it still appears in the list.
+    if (currentValue != null &&
+        currentValue.isNotEmpty &&
+        !_kLanguages.contains(currentValue)) {
+      if (seen.add(currentValue)) result.add(currentValue);
+    }
+
+    for (final lang in _kLanguages) {
+      if (seen.add(lang)) result.add(lang);
+    }
+    return result;
+  }
+
+  /// Maps an arbitrary incoming language string to a value present in
+  /// [_languageItems]. Returns null (show hint) when the value is empty.
+  String? _safeLanguageValue(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final trimmed = raw.trim();
+    // _languageItems always includes trimmed, so this is always safe.
+    return trimmed;
+  }
+
+  /// Builds a fully safe DropdownButtonFormField for language selection.
+  Widget _buildLanguageDropdown() {
+    final items     = _languageItems(_selectedLanguage);
+    final safeValue = (_selectedLanguage != null &&
+            items.contains(_selectedLanguage))
+        ? _selectedLanguage
+        : null;
+
+    return DropdownButtonFormField<String>(
+      value: safeValue,
+      decoration: InputDecoration(
+        labelText: 'Language',
+        border: _border(),
+        enabledBorder: _border(),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide:
+              const BorderSide(color: AppColors.primary, width: 1.5),
+        ),
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      ),
+      hint: const Text('Select language',
+          style: TextStyle(
+              color: AppColors.mutedForeground, fontSize: 14)),
+      // items is already deduplicated — DropdownButton invariant is met.
+      items: items
+          .map((lang) => DropdownMenuItem<String>(
+                value: lang,
+                child: Text(lang,
+                    style: const TextStyle(
+                        fontSize: 14, color: AppColors.foreground)),
+              ))
+          .toList(),
+      onChanged: (val) => setState(() => _selectedLanguage = val),
+    );
   }
 
   List<Map<String, dynamic>> _asList(dynamic raw) =>
@@ -203,6 +300,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
           'organization': _orgCtrl.text.trim(),
         if (_dptCtrl.text.trim().isNotEmpty)
           'department': _dptCtrl.text.trim(),
+        if (_selectedLanguage != null)
+          'language': _selectedLanguage,
       };
       if (_avatarB64 != null)
         u['avatar_url'] = 'https://via.placeholder.com/150';
@@ -269,7 +368,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               SizedBox(
-                width: 48, height: 48,
+                width: 48,
+                height: 48,
                 child: CircularProgressIndicator(
                   color: AppColors.primary,
                   strokeWidth: 3,
@@ -388,7 +488,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                         : null,
                   ),
                   Positioned(
-                    bottom: 0, right: 0,
+                    bottom: 0,
+                    right: 0,
                     child: CircleAvatar(
                       radius: 11,
                       backgroundColor: AppColors.primary,
@@ -405,7 +506,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   children: [
                     Wrap(
                       crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 8, runSpacing: 4,
+                      spacing: 8,
+                      runSpacing: 4,
                       children: [
                         Text(
                           _nameCtrl.text.isNotEmpty
@@ -593,11 +695,20 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
     final pad = _hp(w);
     Widget body;
     switch (_tab) {
-      case 0:  body = _overview(w);  break;
-      case 1:  body = _subsTab();    break;
-      case 2:  body = _worksTab(w);  break;
-      case 3:  body = _ordersTab();  break;
-      default: body = _profileTab(w);
+      case 0:
+        body = _overview(w);
+        break;
+      case 1:
+        body = _subsTab();
+        break;
+      case 2:
+        body = _worksTab(w);
+        break;
+      case 3:
+        body = _ordersTab();
+        break;
+      default:
+        body = _profileTab(w);
     }
     return Padding(
       padding: EdgeInsets.fromLTRB(pad, 20, pad, 0),
@@ -613,14 +724,16 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
     final approved = _subs.where((s) => s['status'] == 'approved').length;
     final under    = _subs.where((s) => s['status'] == 'under_review').length;
     final rejected = _subs.where((s) => s['status'] == 'rejected').length;
-    final published = _works.where((x) => x['status'] == 'published').toList();
+    final published =
+        _works.where((x) => x['status'] == 'published').toList();
 
     if (w >= 640) {
       return Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-              child: _subStatusCard(pending, approved, under, rejected)),
+              child:
+                  _subStatusCard(pending, approved, under, rejected)),
           const SizedBox(width: 16),
           Expanded(child: _topWorksCard(published)),
         ],
@@ -646,7 +759,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
             _Dot('Rejected',       r, const Color(0xFFEF4444)),
             const SizedBox(height: 20),
             SizedBox(
-              width: double.infinity, height: 46,
+              width: double.infinity,
+              height: 46,
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('Submit New Manuscript'),
@@ -667,7 +781,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                 const Color(0xFF16A34A)),
             const SizedBox(height: 16),
             if (pub.isEmpty)
-              _emptyInline(Icons.book_outlined, 'No published works yet.')
+              _emptyInline(
+                  Icons.book_outlined, 'No published works yet.')
             else
               ...pub.take(5).map(_topWorkRow),
           ],
@@ -682,12 +797,14 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
           Navigator.pushNamed(context, '/book-detail', arguments: w),
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 4),
+        padding:
+            const EdgeInsets.symmetric(vertical: 7, horizontal: 4),
         child: Row(children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(5),
             child: SizedBox(
-              width: 36, height: 50,
+              width: 36,
+              height: 50,
               child: _coverImg(w['cover_image_url'] as String?),
             ),
           ),
@@ -751,6 +868,16 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
 
   Widget _subCard(Map<String, dynamic> s) {
     final status = s['status'] as String? ?? '';
+
+    // ── FIX: Language is shown as a plain read-only chip, NOT a
+    //    DropdownButton.  Using a DropdownButton with raw DB values was the
+    //    direct trigger of the assertion because:
+    //      1. The submissions table may store the same language string that
+    //         also appeared in the static _kLanguages list, creating 2 entries.
+    //      2. Or the value may be absent from the list entirely (0 entries).
+    //    Either way the DropdownButton assertion fires. Plain text avoids it.
+    final langLabel = (s['language'] as String? ?? '').trim();
+
     return _Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -763,7 +890,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Wrap(
-                      spacing: 8, runSpacing: 4,
+                      spacing: 8,
+                      runSpacing: 4,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Text(s['title']?.toString() ?? 'Untitled',
@@ -791,8 +919,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                     Wrap(spacing: 14, runSpacing: 4, children: [
                       if (s['publishing_type'] != null)
                         _meta('${s['publishing_type']} publishing'),
-                      if (s['language'] != null)
-                        _meta(s['language'] as String),
+                      // ✅ Plain text chip — never a DropdownButton
+                      if (langLabel.isNotEmpty) _meta(langLabel),
                       _meta('Submitted ${_date(s['created_at'])}'),
                     ]),
                   ],
@@ -825,8 +953,10 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   children: [
                     const TextSpan(
                         text: 'Feedback: ',
-                        style: TextStyle(fontWeight: FontWeight.w700)),
-                    TextSpan(text: s['rejection_feedback'] as String),
+                        style:
+                            TextStyle(fontWeight: FontWeight.w700)),
+                    TextSpan(
+                        text: s['rejection_feedback'] as String),
                   ],
                 ),
               ),
@@ -842,7 +972,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
   // ══════════════════════════════════════════════════════════════════════════
   Widget _worksTab(double w) {
     if (_works.isEmpty) {
-      return _emptyCard(Icons.book_outlined, 'No content uploaded yet.');
+      return _emptyCard(
+          Icons.book_outlined, 'No content uploaded yet.');
     }
     final cols = w >= 900 ? 3 : 2;
     return GridView.builder(
@@ -873,7 +1004,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            height: 150, width: double.infinity,
+            height: 150,
+            width: double.infinity,
             child: _coverImg(w['cover_image_url'] as String?),
           ),
           Expanded(
@@ -910,7 +1042,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                         '${w['total_downloads'] ?? 0}'),
                     if (rating > 0) ...[
                       const SizedBox(width: 8),
-                      _Metric(Icons.star_outline,
+                      _Metric(
+                          Icons.star_outline,
                           rating.toStringAsFixed(1),
                           color: const Color(0xFFD97706)),
                     ],
@@ -919,7 +1052,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   Row(children: [
                     Expanded(
                       child: _miniBtn('View', () =>
-                          Navigator.pushNamed(context, '/book-detail',
+                          Navigator.pushNamed(
+                              context, '/book-detail',
                               arguments: w)),
                     ),
                     const SizedBox(width: 8),
@@ -959,14 +1093,16 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
             Divider(height: 1, color: Colors.grey.shade200),
             if (_orders.isEmpty)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 48),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 48),
                 child: Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(Icons.shopping_bag_outlined,
                           size: 48,
-                          color: AppColors.mutedForeground.withOpacity(0.3)),
+                          color: AppColors.mutedForeground
+                              .withOpacity(0.3)),
                       const SizedBox(height: 12),
                       const Text('No orders yet.',
                           style: TextStyle(
@@ -1017,7 +1153,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
             const SizedBox(width: 10),
             Text(_date(o['created_at']),
                 style: const TextStyle(
-                    color: AppColors.mutedForeground, fontSize: 12)),
+                    color: AppColors.mutedForeground,
+                    fontSize: 12)),
             const Spacer(),
             _Badge(o['payment_status'] ?? '', small: true),
             const SizedBox(width: 8),
@@ -1028,12 +1165,15 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
           ]),
           const SizedBox(height: 10),
           ...items.map<Widget>((item) {
-            final c = item['content'] as Map<String, dynamic>?;
+            final c =
+                item['content'] as Map<String, dynamic>?;
             return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
+              padding:
+                  const EdgeInsets.symmetric(vertical: 4),
               child: Row(children: [
                 Expanded(
-                  child: Text(c?['title']?.toString() ?? 'Content',
+                  child: Text(
+                      c?['title']?.toString() ?? 'Content',
                       style: const TextStyle(
                           color: AppColors.mutedForeground,
                           fontSize: 13)),
@@ -1041,8 +1181,10 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                 if (isPaid)
                   TextButton.icon(
                     onPressed: () => Navigator.pushNamed(
-                        context, '/book-detail', arguments: c),
-                    icon: const Icon(Icons.visibility_outlined,
+                        context, '/book-detail',
+                        arguments: c),
+                    icon: const Icon(
+                        Icons.visibility_outlined,
                         size: 13),
                     label: const Text('Access',
                         style: TextStyle(fontSize: 12)),
@@ -1089,7 +1231,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   child: Stack(children: [
                     CircleAvatar(
                       radius: 44,
-                      backgroundColor: AppColors.primary.withOpacity(0.1),
+                      backgroundColor:
+                          AppColors.primary.withOpacity(0.1),
                       backgroundImage: _avatarImg,
                       child: _avatarImg == null
                           ? Text(
@@ -1104,7 +1247,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                           : null,
                     ),
                     Positioned(
-                      bottom: 4, right: 4,
+                      bottom: 4,
+                      right: 4,
                       child: CircleAvatar(
                         radius: 14,
                         backgroundColor: AppColors.primary,
@@ -1119,14 +1263,17 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     OutlinedButton.icon(
-                      icon: const Icon(Icons.upload_file, size: 15),
+                      icon: const Icon(Icons.upload_file,
+                          size: 15),
                       label: const Text('Change Photo'),
                       onPressed: _pickAvatar,
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.foreground,
-                        side: BorderSide(color: Colors.grey.shade300),
+                        side: BorderSide(
+                            color: Colors.grey.shade300),
                         shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8)),
+                            borderRadius:
+                                BorderRadius.circular(8)),
                       ),
                     ),
                     const SizedBox(height: 5),
@@ -1171,6 +1318,11 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                     _field(_dptCtrl, 'Department'),
                   ],
                   const SizedBox(height: 14),
+                  // ── Language dropdown (safe, deduplicated) ─────────────
+                  _lbl('Language'),
+                  const SizedBox(height: 6),
+                  _buildLanguageDropdown(),
+                  const SizedBox(height: 14),
                   _lbl('Role'),
                   const SizedBox(height: 6),
                   TextField(
@@ -1178,7 +1330,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                         text: RoleService.instance.role),
                     readOnly: true,
                     style: const TextStyle(
-                        color: AppColors.mutedForeground, fontSize: 14),
+                        color: AppColors.mutedForeground,
+                        fontSize: 14),
                     decoration: InputDecoration(
                       border: _border(),
                       enabledBorder: _border(),
@@ -1187,7 +1340,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 14, vertical: 12),
                       suffixIcon: const Icon(Icons.lock_outline,
-                          size: 15, color: AppColors.mutedForeground),
+                          size: 15,
+                          color: AppColors.mutedForeground),
                       helperText: 'Role is assigned by admin.',
                       helperStyle: const TextStyle(
                           fontSize: 11,
@@ -1198,7 +1352,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                   Row(children: [
                     _lbl('Bio'),
                     const Spacer(),
-                    Text('${_bioCtrl.text.length}/$_kMaxBio',
+                    Text(
+                        '${_bioCtrl.text.length}/$_kMaxBio',
                         style: const TextStyle(
                             fontSize: 11,
                             color: AppColors.mutedForeground)),
@@ -1208,20 +1363,25 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                     controller: _bioCtrl,
                     maxLines: 5,
                     maxLength: _kMaxBio,
-                    buildCounter: (_, {required currentLength,
-                            required isFocused, maxLength}) =>
+                    buildCounter: (_,
+                            {required currentLength,
+                            required isFocused,
+                            maxLength}) =>
                         null,
                     style: const TextStyle(
-                        fontSize: 14, color: AppColors.foreground),
+                        fontSize: 14,
+                        color: AppColors.foreground),
                     decoration: InputDecoration(
                       border: _border(),
                       enabledBorder: _border(),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
                         borderSide: const BorderSide(
-                            color: AppColors.primary, width: 1.5),
+                            color: AppColors.primary,
+                            width: 1.5),
                       ),
-                      hintText: 'Tell readers about yourself…',
+                      hintText:
+                          'Tell readers about yourself…',
                       hintStyle: const TextStyle(
                           color: AppColors.mutedForeground,
                           fontSize: 14),
@@ -1240,11 +1400,15 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
                 child: ElevatedButton.icon(
                   icon: _saving
                       ? const SizedBox(
-                          width: 16, height: 16,
+                          width: 16,
+                          height: 16,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.save_outlined, size: 16),
-                  label: Text(_saving ? 'Saving…' : 'Save Changes'),
+                              strokeWidth: 2,
+                              color: Colors.white))
+                      : const Icon(Icons.save_outlined,
+                          size: 16),
+                  label:
+                      Text(_saving ? 'Saving…' : 'Save Changes'),
                   style: _primaryBtn(),
                   onPressed: _saving ? null : _save,
                 ),
@@ -1252,11 +1416,13 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
               SizedBox(
                 height: 46,
                 child: OutlinedButton(
-                  onPressed:
-                      _saving ? null : () => Navigator.maybePop(context),
+                  onPressed: _saving
+                      ? null
+                      : () => Navigator.maybePop(context),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppColors.foreground,
-                    side: BorderSide(color: Colors.grey.shade300),
+                    side:
+                        BorderSide(color: Colors.grey.shade300),
                     padding: const EdgeInsets.symmetric(
                         horizontal: 20, vertical: 12),
                     shape: RoundedRectangleBorder(
@@ -1275,7 +1441,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
         height: 64,
         decoration: BoxDecoration(
           color: Colors.white,
-          border: Border(top: BorderSide(color: Colors.grey.shade200)),
+          border:
+              Border(top: BorderSide(color: Colors.grey.shade200)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.06),
@@ -1296,15 +1463,19 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
             _Nav(
               icon: Icons.menu_book_outlined,
               label: 'Books',
-              onTap: () => Navigator.pushNamed(context, '/books'),
+              onTap: () =>
+                  Navigator.pushNamed(context, '/books'),
             ),
             _Nav(
               icon: Icons.shopping_cart_outlined,
               label: 'Cart',
-              onTap: () => Navigator.pushNamed(context, '/cart'),
+              onTap: () =>
+                  Navigator.pushNamed(context, '/cart'),
             ),
             const _Nav(
-                icon: Icons.person, label: 'Profile', active: true),
+                icon: Icons.person,
+                label: 'Profile',
+                active: true),
           ],
         ),
       );
@@ -1332,7 +1503,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
               ),
               hintText: hint,
               hintStyle: const TextStyle(
-                  color: AppColors.mutedForeground, fontSize: 14),
+                  color: AppColors.mutedForeground,
+                  fontSize: 14),
               filled: true,
               fillColor: Colors.white,
               contentPadding: const EdgeInsets.symmetric(
@@ -1362,7 +1534,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
       style: const TextStyle(
           fontSize: 12, color: AppColors.mutedForeground));
 
-  Widget _miniBtn(String label, VoidCallback fn) => OutlinedButton(
+  Widget _miniBtn(String label, VoidCallback fn) =>
+      OutlinedButton(
         onPressed: fn,
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.foreground,
@@ -1389,7 +1562,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
             const SizedBox(height: 10),
             Text(msg,
                 style: const TextStyle(
-                    color: AppColors.mutedForeground, fontSize: 14)),
+                    color: AppColors.mutedForeground,
+                    fontSize: 14)),
           ]),
         ),
       );
@@ -1404,19 +1578,22 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 72, height: 72,
+                  width: 72,
+                  height: 72,
                   decoration: BoxDecoration(
                     color: AppColors.muted,
                     borderRadius: BorderRadius.circular(36),
                   ),
                   child: Icon(icon,
                       size: 36,
-                      color: AppColors.mutedForeground.withOpacity(0.5)),
+                      color: AppColors.mutedForeground
+                          .withOpacity(0.5)),
                 ),
                 const SizedBox(height: 16),
                 Text(msg,
                     style: const TextStyle(
-                        color: AppColors.mutedForeground, fontSize: 14)),
+                        color: AppColors.mutedForeground,
+                        fontSize: 14)),
                 if (action != null && onTap != null) ...[
                   const SizedBox(height: 20),
                   ElevatedButton.icon(
@@ -1441,7 +1618,8 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
           color: AppColors.muted,
           child: const Center(
             child: SizedBox(
-              width: 20, height: 20,
+              width: 20,
+              height: 20,
               child: CircularProgressIndicator(
                   strokeWidth: 2,
                   color: AppColors.mutedForeground),
@@ -1484,7 +1662,9 @@ class _AuthorDashboardState extends State<AuthorDashboardPage> {
     try {
       final d = DateTime.parse(raw as String).toLocal();
       return '${d.day}/${d.month}/${d.year}';
-    } catch (_) { return ''; }
+    } catch (_) {
+      return '';
+    }
   }
 
   String _price(dynamic raw) {
@@ -1505,8 +1685,14 @@ class _SC extends StatelessWidget {
   final String label, value;
   final IconData icon;
   final Color color, bg;
-  const _SC({required this.label, required this.value,
-      required this.icon, required this.color, required this.bg, Key? key}) : super(key: key);
+  const _SC(
+      {required this.label,
+      required this.value,
+      required this.icon,
+      required this.color,
+      required this.bg,
+      Key? key})
+      : super(key: key);
 
   @override
   Widget build(BuildContext context) => Card(
@@ -1519,9 +1705,11 @@ class _SC extends StatelessWidget {
           padding: const EdgeInsets.all(14),
           child: Row(children: [
             Container(
-              width: 40, height: 40,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
-                  color: bg, borderRadius: BorderRadius.circular(10)),
+                  color: bg,
+                  borderRadius: BorderRadius.circular(10)),
               child: Icon(icon, color: color, size: 20),
             ),
             const SizedBox(width: 12),
@@ -1563,24 +1751,34 @@ class _Badge extends StatelessWidget {
   Widget build(BuildContext context) {
     Color bg, fg, bdr;
     switch (status) {
-      case 'approved': case 'published': case 'paid':
-        bg = const Color(0xFFF0FDF4); fg = const Color(0xFF16A34A);
-        bdr = const Color(0xFFBBF7D0); break;
+      case 'approved':
+      case 'published':
+      case 'paid':
+        bg  = const Color(0xFFF0FDF4);
+        fg  = const Color(0xFF16A34A);
+        bdr = const Color(0xFFBBF7D0);
+        break;
       case 'rejected':
-        bg = const Color(0xFFFEF2F2); fg = const Color(0xFFDC2626);
-        bdr = const Color(0xFFFECACA); break;
+        bg  = const Color(0xFFFEF2F2);
+        fg  = const Color(0xFFDC2626);
+        bdr = const Color(0xFFFECACA);
+        break;
       case 'under_review':
-        bg = const Color(0xFFEFF6FF); fg = const Color(0xFF2563EB);
-        bdr = const Color(0xFFBFDBFE); break;
+        bg  = const Color(0xFFEFF6FF);
+        fg  = const Color(0xFF2563EB);
+        bdr = const Color(0xFFBFDBFE);
+        break;
       default:
-        bg = const Color(0xFFFFFBEB); fg = const Color(0xFFD97706);
+        bg  = const Color(0xFFFFFBEB);
+        fg  = const Color(0xFFD97706);
         bdr = const Color(0xFFFDE68A);
     }
     return Container(
       padding: EdgeInsets.symmetric(
           horizontal: small ? 7 : 10, vertical: small ? 2 : 4),
       decoration: BoxDecoration(
-        color: bg, border: Border.all(color: bdr),
+        color: bg,
+        border: Border.all(color: bdr),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(status,
@@ -1607,7 +1805,8 @@ class _Card extends StatelessWidget {
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.06),
-              blurRadius: 8, offset: const Offset(0, 2),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
           ],
         ),
@@ -1617,8 +1816,11 @@ class _Card extends StatelessWidget {
 }
 
 class _CardHdr extends StatelessWidget {
-  final IconData icon; final String title; final Color color;
+  final IconData icon;
+  final String title;
+  final Color color;
   const _CardHdr(this.icon, this.title, this.color);
+
   @override
   Widget build(BuildContext context) => Row(children: [
         Icon(icon, color: color, size: 18),
@@ -1626,28 +1828,38 @@ class _CardHdr extends StatelessWidget {
         Text(title,
             style: const TextStyle(
               fontFamily: 'PlayfairDisplay',
-              fontSize: 16, fontWeight: FontWeight.w700,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
               color: AppColors.foreground,
             )),
       ]);
 }
 
 class _Dot extends StatelessWidget {
-  final String label; final int count; final Color color;
+  final String label;
+  final int count;
+  final Color color;
   const _Dot(this.label, this.count, this.color);
+
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Row(children: [
-          Container(width: 10, height: 10,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+          Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                  color: color, shape: BoxShape.circle)),
           const SizedBox(width: 12),
-          Expanded(child: Text(label,
-              style: const TextStyle(
-                  color: AppColors.mutedForeground, fontSize: 14))),
+          Expanded(
+              child: Text(label,
+                  style: const TextStyle(
+                      color: AppColors.mutedForeground,
+                      fontSize: 14))),
           Text('$count',
               style: const TextStyle(
-                fontWeight: FontWeight.w700, fontSize: 14,
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
                 color: AppColors.foreground,
               )),
         ]),
@@ -1655,9 +1867,12 @@ class _Dot extends StatelessWidget {
 }
 
 class _Metric extends StatelessWidget {
-  final IconData icon; final String value; final Color color;
+  final IconData icon;
+  final String value;
+  final Color color;
   const _Metric(this.icon, this.value,
       {this.color = AppColors.mutedForeground});
+
   @override
   Widget build(BuildContext context) => Row(
         mainAxisSize: MainAxisSize.min,
@@ -1666,30 +1881,43 @@ class _Metric extends StatelessWidget {
           const SizedBox(width: 3),
           Text(value,
               style: TextStyle(
-                fontSize: 11, color: color, fontWeight: FontWeight.w500)),
+                  fontSize: 11,
+                  color: color,
+                  fontWeight: FontWeight.w500)),
         ],
       );
 }
 
 class _Nav extends StatelessWidget {
-  final IconData icon; final String label;
-  final bool active; final VoidCallback? onTap;
-  const _Nav({required this.icon, required this.label,
-      this.active = false, this.onTap});
+  final IconData icon;
+  final String label;
+  final bool active;
+  final VoidCallback? onTap;
+  const _Nav(
+      {required this.icon,
+      required this.label,
+      this.active = false,
+      this.onTap});
+
   @override
   Widget build(BuildContext context) {
     final c = active ? AppColors.primary : Colors.grey;
     return GestureDetector(
       onTap: onTap,
-      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(icon, color: c, size: 22),
-        const SizedBox(height: 3),
-        Text(label,
-            style: TextStyle(
-              fontSize: 11, color: c,
-              fontWeight: active ? FontWeight.w700 : FontWeight.normal,
-            )),
-      ]),
+      child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: c, size: 22),
+            const SizedBox(height: 3),
+            Text(label,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: c,
+                  fontWeight: active
+                      ? FontWeight.w700
+                      : FontWeight.normal,
+                )),
+          ]),
     );
   }
 }

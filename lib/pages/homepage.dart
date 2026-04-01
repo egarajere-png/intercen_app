@@ -1,27 +1,32 @@
 // lib/pages/homepage.dart
 //
-// FIX: Removed Scaffold + bottomNavigationBar from HomePage.
-// Shell (in main.dart) now owns the single Scaffold and bottom nav bar.
-// HomePage is just a scrollable body widget — no nav, no Scaffold.
-// This prevents the page from rendering its own navbar that routes
-// Profile → /profile instead of /settings.
+// CORRECTED: Added _FeaturedBooksSection (Supabase fetch + fade-cycle + dot indicators)
+//            between HeroSection and CategorySection — matching web Index.tsx order.
+//            Added bookCount to _Category to match CategorySection TSX.
+//            PromoBanner now passes {sale: true} argument to /books route.
+//            No Scaffold / bottomNavigationBar — Shell in main.dart owns those.
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intercen_app/theme/app_colors.dart';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HOME PAGE
+// ─────────────────────────────────────────────────────────────────────────────
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // ✅ No Scaffold, no bottomNavigationBar.
-    // Shell wraps this in a Scaffold and provides the nav bar.
     return const SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _HeroSection(),
+          _FeaturedBooksSection(),   // ← NEW (matches web FeaturedBooks.tsx)
           _CategorySection(),
           _PromoBanner(),
         ],
@@ -30,7 +35,9 @@ class HomePage extends StatelessWidget {
   }
 }
 
-// ── HERO SECTION ────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// HERO SECTION
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _HeroSection extends StatelessWidget {
   const _HeroSection();
@@ -74,10 +81,10 @@ class _HeroSection extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // Subtitle
+                // Eyebrow label
                 Column(
                   children: [
-                    Text(
+                    const Text(
                       'PUBLISHING EXCELLENCE SINCE 2019',
                       textAlign: TextAlign.center,
                       style: TextStyle(
@@ -88,11 +95,7 @@ class _HeroSection extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Container(
-                      width: 60,
-                      height: 1,
-                      color: AppColors.primary,
-                    ),
+                    Container(width: 60, height: 1, color: AppColors.primary),
                   ],
                 ),
 
@@ -121,9 +124,10 @@ class _HeroSection extends StatelessWidget {
 
                 const SizedBox(height: 16),
 
-                // Body text
+                // Body
                 const Text(
-                  'Intercen Books is a leading publisher and book marketplace in East Africa. We help authors bring their stories to life and connect readers with exceptional literature.',
+                  'Intercen Books is a leading publisher and book marketplace in East Africa. '
+                  'We help authors bring their stories to life and connect readers with exceptional literature.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 15,
@@ -140,7 +144,7 @@ class _HeroSection extends StatelessWidget {
                     SizedBox(
                       width: double.infinity,
                       height: 52,
-                      child: ElevatedButton.icon(
+                      child: ElevatedButton(
                         onPressed: () =>
                             Navigator.pushNamed(context, '/books'),
                         style: ElevatedButton.styleFrom(
@@ -151,8 +155,7 @@ class _HeroSection extends StatelessWidget {
                           ),
                           elevation: 0,
                         ),
-                        icon: const SizedBox.shrink(),
-                        label: const Row(
+                        child: const Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
@@ -200,7 +203,7 @@ class _HeroSection extends StatelessWidget {
                 const SizedBox(height: 32),
 
                 // Trust badges
-                Row(
+                const Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     _TrustBadge(
@@ -208,7 +211,7 @@ class _HeroSection extends StatelessWidget {
                       title: 'Fast Delivery',
                       subtitle: 'Across East Africa',
                     ),
-                    const SizedBox(width: 24),
+                    SizedBox(width: 24),
                     _TrustBadge(
                       icon: Icons.menu_book_outlined,
                       title: '500+ Titles',
@@ -225,7 +228,9 @@ class _HeroSection extends StatelessWidget {
   }
 }
 
-// ── TRUST BADGE ─────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// TRUST BADGE
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _TrustBadge extends StatelessWidget {
   final IconData icon;
@@ -277,27 +282,529 @@ class _TrustBadge extends StatelessWidget {
   }
 }
 
-// ── CATEGORY SECTION ────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// FEATURED BOOKS — DATA MODEL
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _BookItem {
+  final String id;
+  final String title;
+  final String author;
+  final double price;
+  final double? originalPrice;
+  final String description;
+  final String coverImage;
+  final double rating;
+  final int reviewCount;
+  final bool bestseller;
+
+  const _BookItem({
+    required this.id,
+    required this.title,
+    required this.author,
+    required this.price,
+    this.originalPrice,
+    required this.description,
+    required this.coverImage,
+    required this.rating,
+    required this.reviewCount,
+    required this.bestseller,
+  });
+
+  factory _BookItem.fromMap(Map<String, dynamic> m) => _BookItem(
+        id: m['id']?.toString() ?? '',
+        title: m['title'] ?? '',
+        author: m['author'] ?? '',
+        price: (m['price'] as num? ?? 0).toDouble(),
+        originalPrice: m['original_price'] != null
+            ? (m['original_price'] as num).toDouble()
+            : null,
+        description: m['description'] ?? '',
+        coverImage: m['cover_image_url'] ?? '',
+        rating: (m['average_rating'] as num? ?? 0).toDouble(),
+        reviewCount: (m['total_reviews'] as num? ?? 0).toInt(),
+        bestseller: m['is_bestseller'] as bool? ?? false,
+      );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FEATURED BOOKS SECTION
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _FeaturedBooksSection extends StatefulWidget {
+  const _FeaturedBooksSection();
+
+  @override
+  State<_FeaturedBooksSection> createState() => _FeaturedBooksSectionState();
+}
+
+class _FeaturedBooksSectionState extends State<_FeaturedBooksSection> {
+  List<_BookItem> _books = [];
+  bool _loading = true;
+  int _currentIndex = 0;
+  bool _visible = true;
+  Timer? _timer;
+
+  // ── Lifecycle ────────────────────────────────────────────────────────────
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchFeaturedBooks();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  // ── Data ─────────────────────────────────────────────────────────────────
+
+  Future<void> _fetchFeaturedBooks() async {
+    try {
+      final data = await Supabase.instance.client
+          .from('content')
+          .select('*')
+          .eq('is_featured', true)
+          .eq('status', 'published')
+          .order('published_at', ascending: false)
+          .limit(9);
+
+      if (!mounted) return;
+      setState(() {
+        _books = (data as List<dynamic>)
+            .map((item) => _BookItem.fromMap(item as Map<String, dynamic>))
+            .toList();
+        _loading = false;
+      });
+      _startCycle();
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  // ── Cycling ───────────────────────────────────────────────────────────────
+  // Matches web: 15 s display + 1.2 s crossfade = 16.2 s interval.
+
+  void _startCycle() {
+    if (_books.length <= 1) return;
+    _timer = Timer.periodic(const Duration(milliseconds: 16200), (_) {
+      if (!mounted) return;
+      setState(() => _visible = false);
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (!mounted) return;
+        setState(() {
+          _currentIndex = (_currentIndex + 1) % _books.length;
+          _visible = true;
+        });
+      });
+    });
+  }
+
+  // ── Build ─────────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Header row ──────────────────────────────────────────────────
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'CURATED SELECTION',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 3.5,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Container(width: 60, height: 1, color: AppColors.primary),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Featured Books',
+                      style: TextStyle(
+                        fontFamily: 'PlayfairDisplay',
+                        fontSize: 26,
+                        fontWeight: FontWeight.w400,
+                        color: AppColors.foreground,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Hand-picked selections from our editors',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              GestureDetector(
+                onTap: () => Navigator.pushNamed(context, '/books'),
+                child: const Row(
+                  children: [
+                    Text(
+                      'View All',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    SizedBox(width: 4),
+                    Icon(Icons.arrow_forward, size: 16, color: AppColors.primary),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 24),
+
+          // ── Content ─────────────────────────────────────────────────────
+          if (_loading)
+            const SizedBox(
+              height: 280,
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(
+                      color: AppColors.primary,
+                      strokeWidth: 2.5,
+                    ),
+                    SizedBox(height: 16),
+                    Text(
+                      'Loading featured books…',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else if (_books.isEmpty)
+            const SizedBox(
+              height: 200,
+              child: Center(
+                child: Text(
+                  'No featured books available at the moment.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: AppColors.mutedForeground,
+                  ),
+                ),
+              ),
+            )
+          else
+            AnimatedOpacity(
+              opacity: _visible ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 600),
+              child: _FeaturedBookCard(book: _books[_currentIndex]),
+            ),
+
+          // ── Dot indicators ───────────────────────────────────────────────
+          if (!_loading && _books.length > 1) ...[
+            const SizedBox(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(_books.length, (i) {
+                final active = i == _currentIndex;
+                return GestureDetector(
+                  onTap: () {
+                    _timer?.cancel();
+                    setState(() {
+                      _visible = false;
+                    });
+                    Future.delayed(const Duration(milliseconds: 300), () {
+                      if (!mounted) return;
+                      setState(() {
+                        _currentIndex = i;
+                        _visible = true;
+                      });
+                      _startCycle();
+                    });
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    width: active ? 22 : 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: active
+                          ? AppColors.primary
+                          : AppColors.muted,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FEATURED BOOK CARD  (variant="featured" equivalent)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _FeaturedBookCard extends StatelessWidget {
+  final _BookItem book;
+  const _FeaturedBookCard({required this.book});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => Navigator.pushNamed(context, '/book/${book.id}'),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 24,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.hardEdge,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Cover image ───────────────────────────────────────────────
+            SizedBox(
+              width: 130,
+              height: 200,
+              child: book.coverImage.isNotEmpty
+                  ? CachedNetworkImage(
+                      imageUrl: book.coverImage,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => Container(
+                        color: AppColors.muted,
+                        child: const Center(
+                          child: SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.primary,
+                            ),
+                          ),
+                        ),
+                      ),
+                      errorWidget: (_, __, ___) => Container(
+                        color: AppColors.muted,
+                        child: const Icon(
+                          Icons.book_outlined,
+                          size: 36,
+                          color: AppColors.mutedForeground,
+                        ),
+                      ),
+                    )
+                  : Container(
+                      color: AppColors.muted,
+                      child: const Icon(
+                        Icons.book_outlined,
+                        size: 36,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ),
+            ),
+
+            // ── Details ───────────────────────────────────────────────────
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Bestseller badge
+                    if (book.bestseller) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.gold.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: const Text(
+                          'BESTSELLER',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.5,
+                            color: AppColors.gold,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+
+                    // Title
+                    Text(
+                      book.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'PlayfairDisplay',
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.foreground,
+                        height: 1.3,
+                      ),
+                    ),
+
+                    const SizedBox(height: 4),
+
+                    // Author
+                    Text(
+                      book.author,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    // Star rating
+                    if (book.rating > 0) ...[
+                      Row(
+                        children: [
+                          ...List.generate(5, (i) {
+                            if (i < book.rating.floor()) {
+                              return const Icon(Icons.star,
+                                  size: 13, color: AppColors.gold);
+                            } else if (i < book.rating) {
+                              return const Icon(Icons.star_half,
+                                  size: 13, color: AppColors.gold);
+                            }
+                            return const Icon(Icons.star_outline,
+                                size: 13, color: AppColors.gold);
+                          }),
+                          const SizedBox(width: 4),
+                          Text(
+                            '(${book.reviewCount})',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.mutedForeground,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+
+                    // Description
+                    Text(
+                      book.description,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        height: 1.5,
+                        color: AppColors.mutedForeground,
+                      ),
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    // Price + cart button
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'KES ${book.price.toStringAsFixed(0)}',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                            if (book.originalPrice != null)
+                              Text(
+                                'KES ${book.originalPrice!.toStringAsFixed(0)}',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.mutedForeground,
+                                  decoration: TextDecoration.lineThrough,
+                                ),
+                              ),
+                          ],
+                        ),
+                        Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.add_shopping_cart_outlined,
+                            size: 18,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CATEGORY SECTION
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _CategorySection extends StatelessWidget {
   const _CategorySection();
 
   static const _categories = [
-    _Category('Fiction', 'fiction',
+    _Category('Fiction', 'fiction', 84,
         'https://images.unsplash.com/photo-1481627834876-b7833e8f5570?w=400&h=300&fit=crop'),
-    _Category('Non-Fiction', 'non-fiction',
+    _Category('Non-Fiction', 'non-fiction', 62,
         'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=300&fit=crop'),
-    _Category('Mystery & Thriller', 'mystery-thriller',
+    _Category('Mystery & Thriller', 'mystery-thriller', 47,
         'https://images.unsplash.com/photo-1509021436665-8f07dbf5bf1d?w=400&h=300&fit=crop'),
-    _Category('Romance', 'romance',
+    _Category('Romance', 'romance', 55,
         'https://images.unsplash.com/photo-1518199266791-5375a83190b7?w=400&h=300&fit=crop'),
-    _Category('Science Fiction', 'science-fiction',
+    _Category('Science Fiction', 'science-fiction', 38,
         'https://images.unsplash.com/photo-1446776653964-20c1d3a81b06?w=400&h=300&fit=crop'),
-    _Category('Biography', 'biography',
+    _Category('Biography', 'biography', 29,
         'https://images.unsplash.com/photo-1516979187457-637abb4f9353?w=400&h=300&fit=crop'),
-    _Category('Self-Help', 'self-help',
+    _Category('Self-Help', 'self-help', 43,
         'https://images.unsplash.com/photo-1589829085413-56de8ae18c73?w=400&h=300&fit=crop'),
-    _Category("Children's Books", 'childrens',
+    _Category("Children's Books", 'childrens', 31,
         'https://images.unsplash.com/photo-1629992101753-56d196c8aabb?w=400&h=300&fit=crop'),
   ];
 
@@ -311,7 +818,7 @@ class _CategorySection extends StatelessWidget {
           // Header
           Column(
             children: [
-              Text(
+              const Text(
                 'CATEGORIES',
                 style: TextStyle(
                   fontSize: 11,
@@ -347,7 +854,7 @@ class _CategorySection extends StatelessWidget {
 
           const SizedBox(height: 24),
 
-          // Category Grid — 2 columns
+          // 2-column grid
           GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
@@ -358,10 +865,8 @@ class _CategorySection extends StatelessWidget {
               mainAxisSpacing: 12,
               childAspectRatio: 4 / 3,
             ),
-            itemBuilder: (context, index) {
-              final cat = _categories[index];
-              return _CategoryCard(category: cat);
-            },
+            itemBuilder: (context, index) =>
+                _CategoryCard(category: _categories[index]),
           ),
         ],
       ),
@@ -372,8 +877,9 @@ class _CategorySection extends StatelessWidget {
 class _Category {
   final String name;
   final String slug;
+  final int bookCount;
   final String imageUrl;
-  const _Category(this.name, this.slug, this.imageUrl);
+  const _Category(this.name, this.slug, this.bookCount, this.imageUrl);
 }
 
 class _CategoryCard extends StatelessWidget {
@@ -383,8 +889,11 @@ class _CategoryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () =>
-          Navigator.pushNamed(context, '/books', arguments: category.slug),
+      onTap: () => Navigator.pushNamed(
+        context,
+        '/books',
+        arguments: {'category': category.slug},
+      ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Stack(
@@ -414,7 +923,7 @@ class _CategoryCard extends StatelessWidget {
               ),
             ),
 
-            // Dark gradient overlay
+            // Gradient overlay
             Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
@@ -430,19 +939,32 @@ class _CategoryCard extends StatelessWidget {
               ),
             ),
 
-            // Text
+            // Text (name + book count)
             Positioned(
               left: 12,
               right: 12,
-              bottom: 12,
-              child: Text(
-                category.name,
-                style: const TextStyle(
-                  fontFamily: 'PlayfairDisplay',
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                ),
+              bottom: 10,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    category.name,
+                    style: const TextStyle(
+                      fontFamily: 'PlayfairDisplay',
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${category.bookCount} books',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.white.withOpacity(0.75),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -452,7 +974,9 @@ class _CategoryCard extends StatelessWidget {
   }
 }
 
-// ── PROMO BANNER ────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// PROMO BANNER
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _PromoBanner extends StatelessWidget {
   const _PromoBanner();
@@ -502,7 +1026,7 @@ class _PromoBanner extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Limited Time Offer pill
+                    // Limited Time pill
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 14, vertical: 6),
@@ -513,8 +1037,7 @@ class _PromoBanner extends StatelessWidget {
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.percent,
-                              size: 14, color: Colors.white),
+                          Icon(Icons.percent, size: 14, color: Colors.white),
                           SizedBox(width: 6),
                           Text(
                             'Limited Time Offer',
@@ -546,7 +1069,8 @@ class _PromoBanner extends StatelessWidget {
 
                     // Body
                     Text(
-                      "Don't miss out on our biggest sale of the year. Discover amazing deals on bestsellers and new releases.",
+                      "Don't miss out on our biggest sale of the year. "
+                      'Discover amazing deals on bestsellers and new releases.',
                       style: TextStyle(
                         fontSize: 14,
                         height: 1.5,
@@ -556,12 +1080,15 @@ class _PromoBanner extends StatelessWidget {
 
                     const SizedBox(height: 20),
 
-                    // Shop the Sale button
+                    // CTA — passes sale:true argument to /books (matches TSX ?sale=true)
                     SizedBox(
                       height: 48,
-                      child: ElevatedButton.icon(
-                        onPressed: () =>
-                            Navigator.pushNamed(context, '/books'),
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pushNamed(
+                          context,
+                          '/books',
+                          arguments: {'sale': true},
+                        ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.gold,
                           foregroundColor: AppColors.foreground,
@@ -570,8 +1097,7 @@ class _PromoBanner extends StatelessWidget {
                           ),
                           elevation: 0,
                         ),
-                        icon: const SizedBox.shrink(),
-                        label: const Row(
+                        child: const Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(

@@ -13,10 +13,12 @@ class Content {
   final String? categoryId;
   final String? language;
   final String? coverImageUrl;
+  final String? backpageImageUrl;   // ← NEW: back cover image
   final String? fileUrl;
   final int? fileSizeBytes;
   final int? pageCount;
   final double price;
+  final double? originalPrice;      // ← NEW: original price before discount
   final bool isFree;
   final bool isForSale;
   final int stockQuantity;
@@ -40,6 +42,7 @@ class Content {
   final String updatedAt;
   final String? publishedAt;
   final bool? isOwnContent;
+  final List<String>? metaKeywords; // ← NEW: tags / meta keywords
 
   Content({
     required this.id,
@@ -54,10 +57,12 @@ class Content {
     this.categoryId,
     this.language,
     this.coverImageUrl,
+    this.backpageImageUrl,       // ← NEW
     this.fileUrl,
     this.fileSizeBytes,
     this.pageCount,
     this.price = 0,
+    this.originalPrice,          // ← NEW
     this.isFree = false,
     this.isForSale = true,
     this.stockQuantity = 0,
@@ -81,6 +86,7 @@ class Content {
     this.updatedAt = '',
     this.publishedAt,
     this.isOwnContent,
+    this.metaKeywords,           // ← NEW
   });
 
   factory Content.fromJson(Map<String, dynamic> json) {
@@ -97,10 +103,12 @@ class Content {
       categoryId: json['category_id'] as String?,
       language: json['language'] as String?,
       coverImageUrl: json['cover_image_url'] as String?,
+      backpageImageUrl: json['backpage_image_url'] as String?,       // ← NEW
       fileUrl: json['file_url'] as String?,
       fileSizeBytes: json['file_size_bytes'] as int?,
       pageCount: json['page_count'] as int?,
       price: (json['price'] as num?)?.toDouble() ?? 0,
+      originalPrice: (json['original_price'] as num?)?.toDouble(),  // ← NEW
       isFree: json['is_free'] as bool? ?? false,
       isForSale: json['is_for_sale'] as bool? ?? true,
       stockQuantity: json['stock_quantity'] as int? ?? 0,
@@ -124,6 +132,9 @@ class Content {
       updatedAt: json['updated_at'] as String? ?? '',
       publishedAt: json['published_at'] as String?,
       isOwnContent: json['is_own_content'] as bool?,
+      metaKeywords: (json['meta_keywords'] as List<dynamic>?)        // ← NEW
+          ?.map((e) => e as String)
+          .toList(),
     );
   }
 
@@ -140,10 +151,12 @@ class Content {
         'category_id': categoryId,
         'language': language,
         'cover_image_url': coverImageUrl,
+        'backpage_image_url': backpageImageUrl,  // ← NEW
         'file_url': fileUrl,
         'file_size_bytes': fileSizeBytes,
         'page_count': pageCount,
         'price': price,
+        'original_price': originalPrice,         // ← NEW
         'is_free': isFree,
         'is_for_sale': isForSale,
         'stock_quantity': stockQuantity,
@@ -166,5 +179,95 @@ class Content {
         'created_at': createdAt,
         'updated_at': updatedAt,
         'published_at': publishedAt,
+        'meta_keywords': metaKeywords,           // ← NEW
       };
+
+  Content copyWith({
+    String? id,
+    String? title,
+    String? subtitle,
+    String? description,
+    String? contentType,
+    String? format,
+    String? author,
+    String? publisher,
+    String? publishedDate,
+    String? categoryId,
+    String? language,
+    String? coverImageUrl,
+    String? backpageImageUrl,
+    String? fileUrl,
+    int? fileSizeBytes,
+    int? pageCount,
+    double? price,
+    double? originalPrice,
+    bool? isFree,
+    bool? isForSale,
+    int? stockQuantity,
+    String? isbn,
+    bool? isFeatured,
+    bool? isBestseller,
+    bool? isNewArrival,
+    double? averageRating,
+    int? totalReviews,
+    int? totalDownloads,
+    int? viewCount,
+    String? visibility,
+    String? accessLevel,
+    String? documentNumber,
+    String? version,
+    String? department,
+    String? confidentiality,
+    String? status,
+    String? uploadedBy,
+    String? createdAt,
+    String? updatedAt,
+    String? publishedAt,
+    bool? isOwnContent,
+    List<String>? metaKeywords,
+  }) =>
+      Content(
+        id: id ?? this.id,
+        title: title ?? this.title,
+        subtitle: subtitle ?? this.subtitle,
+        description: description ?? this.description,
+        contentType: contentType ?? this.contentType,
+        format: format ?? this.format,
+        author: author ?? this.author,
+        publisher: publisher ?? this.publisher,
+        publishedDate: publishedDate ?? this.publishedDate,
+        categoryId: categoryId ?? this.categoryId,
+        language: language ?? this.language,
+        coverImageUrl: coverImageUrl ?? this.coverImageUrl,
+        backpageImageUrl: backpageImageUrl ?? this.backpageImageUrl,
+        fileUrl: fileUrl ?? this.fileUrl,
+        fileSizeBytes: fileSizeBytes ?? this.fileSizeBytes,
+        pageCount: pageCount ?? this.pageCount,
+        price: price ?? this.price,
+        originalPrice: originalPrice ?? this.originalPrice,
+        isFree: isFree ?? this.isFree,
+        isForSale: isForSale ?? this.isForSale,
+        stockQuantity: stockQuantity ?? this.stockQuantity,
+        isbn: isbn ?? this.isbn,
+        isFeatured: isFeatured ?? this.isFeatured,
+        isBestseller: isBestseller ?? this.isBestseller,
+        isNewArrival: isNewArrival ?? this.isNewArrival,
+        averageRating: averageRating ?? this.averageRating,
+        totalReviews: totalReviews ?? this.totalReviews,
+        totalDownloads: totalDownloads ?? this.totalDownloads,
+        viewCount: viewCount ?? this.viewCount,
+        visibility: visibility ?? this.visibility,
+        accessLevel: accessLevel ?? this.accessLevel,
+        documentNumber: documentNumber ?? this.documentNumber,
+        version: version ?? this.version,
+        department: department ?? this.department,
+        confidentiality: confidentiality ?? this.confidentiality,
+        status: status ?? this.status,
+        uploadedBy: uploadedBy ?? this.uploadedBy,
+        createdAt: createdAt ?? this.createdAt,
+        updatedAt: updatedAt ?? this.updatedAt,
+        publishedAt: publishedAt ?? this.publishedAt,
+        isOwnContent: isOwnContent ?? this.isOwnContent,
+        metaKeywords: metaKeywords ?? this.metaKeywords,
+      );
 }
