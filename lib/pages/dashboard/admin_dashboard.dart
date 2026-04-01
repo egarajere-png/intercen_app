@@ -2519,42 +2519,55 @@ class _ContentGridCard extends StatelessWidget {
                 gradient: LinearGradient(begin: Alignment.bottomCenter, end: Alignment.topCenter,
                     colors: [Color(0xCC000000), Colors.transparent])),
               padding: const EdgeInsets.all(6),
-              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                _iconBtn(Icons.visibility_outlined, () => onView(id)),
-                const SizedBox(width: 4),
-                _iconBtn(Icons.edit_outlined, () => onEdit(id)),
-                const SizedBox(width: 4),
-                _iconBtn(isFeatured ? Icons.star_rounded : Icons.star_border_rounded,
-                    () => onToggleFeatured(id, isFeatured), color: isFeatured ? _kAmber : Colors.white),
-                const SizedBox(width: 4),
-                isBusy
-                    ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : _iconBtn(isPublished ? Icons.visibility_off_outlined : Icons.public_rounded,
-                        () => onPublish(id, isPublished ? 'unpublish' : 'publish'),
-                        color: isPublished ? const Color(0xFFFF8C00) : _kGreen),
-                const SizedBox(width: 4),
-                isDeleting
-                    ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : _iconBtn(Icons.delete_outline, () => onDelete(id, title), color: _kRed),
-              ]))),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  _iconBtn(Icons.visibility_outlined, () => onView(id)),
+                  const SizedBox(width: 4),
+                  _iconBtn(Icons.edit_outlined, () => onEdit(id)),
+                  const SizedBox(width: 4),
+                  _iconBtn(isFeatured ? Icons.star_rounded : Icons.star_border_rounded,
+                      () => onToggleFeatured(id, isFeatured), color: isFeatured ? _kAmber : Colors.white),
+                  const SizedBox(width: 4),
+                  isBusy
+                      ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : _iconBtn(isPublished ? Icons.visibility_off_outlined : Icons.public_rounded,
+                          () => onPublish(id, isPublished ? 'unpublish' : 'publish'),
+                          color: isPublished ? const Color(0xFFFF8C00) : _kGreen),
+                  const SizedBox(width: 4),
+                  isDeleting
+                      ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : _iconBtn(Icons.delete_outline, () => onDelete(id, title), color: _kRed),
+                ]),
+              ),
+            )),
         ])),
-        Padding(padding: const EdgeInsets.all(8), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title, style: const TextStyle(fontFamily: 'DM Sans', fontWeight: FontWeight.w600, fontSize: 11, color: Color(0xFF1F2937)),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-          Text(author, style: const TextStyle(fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-          const SizedBox(height: 4),
-          Row(children: [
-            Expanded(child: Text(type, style: const TextStyle(fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt))),
-            isFree
-                ? const Text('Free', style: TextStyle(fontFamily: 'DM Sans', fontSize: 10, fontWeight: FontWeight.w700, color: _kGreen))
-                : Text('KES ${price.toStringAsFixed(0)}',
-                    style: const TextStyle(fontFamily: 'DM Sans', fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF1F2937))),
-          ]),
-          if (views > 0 || dls > 0)
-            Text('${views > 0 ? '$views views' : ''}${dls > 0 ? ' · $dls dl' : ''}',
-                style: const TextStyle(fontFamily: 'DM Sans', fontSize: 8, color: _kMutedLt)),
-        ])),
+        Padding(
+          padding: const EdgeInsets.all(8),
+          child: SizedBox(
+            width: double.infinity,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(fontFamily: 'DM Sans', fontWeight: FontWeight.w600, fontSize: 11, color: Color(0xFF1F2937)),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                Text(author, style: const TextStyle(fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 4),
+                Row(children: [
+                  Expanded(child: Text(type, style: const TextStyle(fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt))),
+                  isFree
+                      ? const Text('Free', style: TextStyle(fontFamily: 'DM Sans', fontSize: 10, fontWeight: FontWeight.w700, color: _kGreen))
+                      : Text('KES ${price.toStringAsFixed(0)}',
+                          style: const TextStyle(fontFamily: 'DM Sans', fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF1F2937))),
+                ]),
+                if (views > 0 || dls > 0)
+                  Text('${views > 0 ? '$views views' : ''}${dls > 0 ? ' · $dls dl' : ''}',
+                      style: const TextStyle(fontFamily: 'DM Sans', fontSize: 8, color: _kMutedLt)),
+              ],
+            ),
+          ),
+        ),
       ]),
     );
   }
@@ -2675,16 +2688,13 @@ Widget build(BuildContext context) {
                       ))
                   : Text(
                       'KES ${price.toStringAsFixed(0)}',
-                      style: const TextStyle(
-                          fontFamily: 'DM Sans', fontSize: 11, fontWeight: FontWeight.w700),
+                      style: const TextStyle(fontFamily: 'DM Sans', fontSize: 11, fontWeight: FontWeight.w700),
                     ),
               Text('${views}v ${dls}dl',
-                  style: const TextStyle(
-                      fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt)),
+                  style: const TextStyle(fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt)),
               if (created != null)
                 Text(_fmtDate(created),
-                    style: const TextStyle(
-                        fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt)),
+                    style: const TextStyle(fontFamily: 'DM Sans', fontSize: 9, color: _kMutedLt)),
             ],
           ),
         ]),
@@ -2692,38 +2702,43 @@ Widget build(BuildContext context) {
       const SizedBox(width: 8),
 
       // Action icons — fixed on the right, never shrink
-      Row(mainAxisSize: MainAxisSize.min, children: [
-        _tinyBtn(Icons.visibility_outlined, () => onView(id)),
-        _tinyBtn(Icons.edit_outlined, () => onEdit(id)),
-        _tinyBtn(
-          isFeatured ? Icons.star_rounded : Icons.star_border_rounded,
-          () => onToggleFeatured(id, isFeatured),
-          color: isFeatured ? _kAmber : _kMuted,
+      Flexible(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            _tinyBtn(Icons.visibility_outlined, () => onView(id)),
+            _tinyBtn(Icons.edit_outlined, () => onEdit(id)),
+            _tinyBtn(
+              isFeatured ? Icons.star_rounded : Icons.star_border_rounded,
+              () => onToggleFeatured(id, isFeatured),
+              color: isFeatured ? _kAmber : _kMuted,
+            ),
+            isBusy
+                ? const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(_kPrimary),
+                    ))
+                : _tinyBtn(
+                    isPublished
+                        ? Icons.visibility_off_outlined
+                        : Icons.public_rounded,
+                    () => onPublish(id, isPublished ? 'unpublish' : 'publish'),
+                    color: isPublished ? _kOrange : _kGreen,
+                  ),
+            isDeleting
+                ? const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(_kRed),
+                    ))
+                : _tinyBtn(Icons.delete_outline, () => onDelete(id, title),
+                    color: _kRed),
+          ]),
         ),
-        isBusy
-            ? const SizedBox(
-                width: 20, height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation(_kPrimary),
-                ))
-            : _tinyBtn(
-                isPublished
-                    ? Icons.visibility_off_outlined
-                    : Icons.public_rounded,
-                () => onPublish(id, isPublished ? 'unpublish' : 'publish'),
-                color: isPublished ? _kOrange : _kGreen,
-              ),
-        isDeleting
-            ? const SizedBox(
-                width: 20, height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation(_kRed),
-                ))
-            : _tinyBtn(Icons.delete_outline, () => onDelete(id, title),
-                color: _kRed),
-      ]),
+      ),
     ]),
   );
 }
